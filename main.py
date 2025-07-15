@@ -6,6 +6,9 @@ from datetime import datetime
 import pandas as pd
 import pytz
 import aiofiles
+import threading
+import openai
+import firebase_admin
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -17,10 +20,9 @@ from telegram.ext import (
 )
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
-import openai
 from openai import OpenAI
-import firebase_admin
 from firebase_admin import credentials, db
+from flask import Flask, request
 
 # ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────────
 
@@ -51,6 +53,12 @@ firebase_admin.initialize_app(cred, {
     'databaseURL': FIREBASE_URL
 })
 ref = db.reference("/usuarios")
+#webhook
+flask_app = Flask(__name__)
+BOT_URL = os.environ.get("BOT_URL")
+WEBHOOK_PATH = f"/{TOKEN}"
+WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
+
 
 EMOCOES = ["ansioso", "animado", "cansado", "focado", "triste", "feliz", "nervoso", "motivado"]
 TEMAS   = ["investimento", "treino", "relacionamento", "espiritualidade", "saúde", "trabalho"]
@@ -413,12 +421,6 @@ async def mensagem(update, context):
     await processar_texto(uid, txt, update, context)
 
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
-from flask import Flask, request
-flask_app = Flask(__name__)
-
-BOT_URL = os.environ.get("BOT_URL")
-WEBHOOK_PATH = f"/{TOKEN}"
-WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
 
 def main():
     app = (
@@ -453,6 +455,6 @@ def home():
     return "✅ Sophos Bot está rodando via webhook"
 
 if __name__ == "__main__":
-    import threading
+    
     threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=3000)).start()
     main()
