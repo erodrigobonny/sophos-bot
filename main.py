@@ -30,8 +30,9 @@ HISTORY_LIMIT = 10
 SUMMARY_KEY = "resumo_anterior"
 
 ###TOKEN =
-import os
-TOKEN = os.environ.get("TOKEN_TELEGRAM")
+#import os
+TOKEN = 8187879473:AAFvAeECr2SMHYs6kqA87vuU3H1xzZYCDgY
+#TOKEN = os.environ.get("TOKEN_TELEGRAM")
 import os
 #import openai
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
