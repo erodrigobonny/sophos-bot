@@ -4,3 +4,4 @@ openai
 pandas
 aiofiles
 flask
+reportlab
