@@ -29,7 +29,7 @@ HISTORY_LIMIT = 10
 # campo no Firebase onde guardamos o resumo das mensagens mais antigas
 SUMMARY_KEY = "resumo_anterior"
 
-####TOKEN =
+###TOKEN =
 import os
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
 import os
