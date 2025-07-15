@@ -29,7 +29,7 @@ HISTORY_LIMIT = 10
 # campo no Firebase onde guardamos o resumo das mensagens mais antigas
 SUMMARY_KEY = "resumo_anterior"
 
-TOKEN = 
+####TOKEN = 
 import os
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 FIREBASE_URL = "https://sophos-ddbed-default-rtdb.firebaseio.com"
