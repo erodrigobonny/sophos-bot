@@ -33,9 +33,9 @@ SUMMARY_KEY = "resumo_anterior"
 # estilo padrão do bot
 ESTILO_SOPHOS = "Você é um filósofo estoico, visão tradicional, sagaz, firme, humor rápido, direto e analítico, mas com alma de engenheiro. Nada de papo furado."
 # 2) Instruções de “role system” para lembrar perfil e contexto:
-ROLE_PROMPT = (
-    "Siga estritamente o perfil do usuário ao formular respostas, "
-    "referenciando sempre as emoções e temas já registrados no histórico."
+#ROLE_PROMPT = (
+    #"Siga estritamente o perfil do usuário ao formular respostas, "
+    #"referenciando sempre as emoções e temas já registrados no histórico."
 
 ###TOKEN =
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
@@ -138,43 +138,25 @@ async def resumir_contexto_antigo(user_id):
         return  # nada a resumir ainda
 
     # pega as mensagens “antigas” além do HISTORY_LIMIT
-    #antigas = textos[:-HISTORY_LIMIT]
-    #prompt = "Resuma brevemente o seguinte histórico de conversas:\n\n" + "\n".join(antigas)
-    #resp = client.chat.completions.create(
-        #model="gpt-4o",
+    antigas = textos[:-HISTORY_LIMIT]
+    prompt = "Resuma brevemente o seguinte histórico de conversas:\n\n" + "\n".join(antigas)
+    resp = client.chat.completions.create(
+        model="gpt-4o",
         ###original messages=[{"role":"user","content":prompt}]
     ###original)
-        #messages=[
-        #{
-         #   "role": "system",
-           # "content": ESTILO_SOPHOS
-        #},
-        #{
-        #    "role": "user",
-           # "content": pergunta  # ou mensagem["text"], depende do seu código
-     #   }
-   # ]
-#)
-        
-    #resumo = resp.choices[0].message.content
-    # monta o prompt de resumo das mensagens antigas
-    antigas = textos[:-HISTORY_LIMIT]
-    prompt = (
-    "Resuma brevemente o seguinte histórico de conversas:\n\n"
-    + "\n".join(antigas)
-)
-
-# chama o GPT com os dois system prompts e a mensagem de usuário
-resp = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {"role": "system", "content": ESTILO_SOPHOS},
-        {"role": "system", "content": ROLE_PROMPT},
-        {"role": "user",   "content": prompt},
+        messages=[
+        {
+            "role": "system",
+            "content": ESTILO_SOPHOS
+        },
+        {
+            "role": "user",
+            "content":prompt  # ou mensagem["text"], depende do seu código
+        }
     ]
 )
-
-resumo = resp.choices[0].message.content
+        
+    resumo = resp.choices[0].message.content
 
     # salva no Firebase e remove histórico bruto antigo
     ref.child(str(user_id)).child(SUMMARY_KEY).set({"texto": resumo, "data": datetime.now().isoformat()})
