@@ -402,7 +402,6 @@ async def mensagem(update, context):
 
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
 from flask import Flask, request
-import telegram
 flask_app = Flask(__name__)
 
 BOT_URL = os.environ.get("BOT_URL")
@@ -410,8 +409,11 @@ WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
 
 def main():
-    bot = telegram.Bot(token=TOKEN)
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .build()
+    )
     
     #Handlers
     app.add_handler(CommandHandler("start", start))
