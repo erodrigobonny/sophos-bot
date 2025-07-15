@@ -403,7 +403,7 @@ async def mensagem(update, context):
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
 from flask import Flask, request
 import telegram
-flask_app = Flask(__name)
+flask_app = Flask(__name__)
 
 BOT_URL = os.environ.get("BOT_URL")
 WEBHOOK_PATH = f"/{TOKEN}"
