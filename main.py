@@ -35,8 +35,18 @@ TOKEN = os.environ.get("TOKEN_TELEGRAM")
 #import openai
 import os
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+import os, json
+import firebase_admin
+from firebase_admin import credentials, db
 FIREBASE_URL = "https://sophos-ddbed-default-rtdb.firebaseio.com"
-FIREBASE_CRED_PATH = "firebase_key.json"
+cred_dict = json.loads(os.environ["FIREBASE_CRED_JSON"])
+cred = credentials.Certificate(cred_dict)
+
+firebase_admin.initialize_app(cred, {
+    'databaseURL': FIREBASE_URL
+})
+ref = db.reference("/usuarios")
+#FIREBASE_CRED_PATH = "firebase_key.json"
 
 openai.api_key = OPENAI_API_KEY
 client = OpenAI(api_key=OPENAI_API_KEY)
