@@ -32,6 +32,10 @@ SUMMARY_KEY = "resumo_anterior"
 
 # estilo padrão do bot
 ESTILO_SOPHOS = "Você é um filósofo estoico, visão tradicional, sagaz, firme, humor rápido, direto e analítico, mas com alma de engenheiro. Nada de papo furado."
+# 2) Instruções de “role system” para lembrar perfil e contexto:
+ROLE_PROMPT = (
+    "Siga estritamente o perfil do usuário ao formular respostas, "
+    "referenciando sempre as emoções e temas já registrados no histórico."
 
 ###TOKEN =
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
