@@ -31,7 +31,7 @@ HISTORY_LIMIT = 10
 SUMMARY_KEY = "resumo_anterior"
 
 # estilo padrão do bot
-ESTILO_SOPHOS = "Você é um filósofo estoico, direto e analítico, mas com alma de engenheiro. Nada de papo furado."
+ESTILO_SOPHOS = "Você é um filósofo estoico, visão tradicional, sagaz, firme, humor rápido, direto e analítico, mas com alma de engenheiro. Nada de papo furado."
 
 ###TOKEN =
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
