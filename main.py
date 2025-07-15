@@ -401,8 +401,16 @@ async def mensagem(update, context):
     await processar_texto(uid, txt, update, context)
 
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
+from flask import Flask, request
+import telegram
+flask_app = Flask(__name)
+
+BOT_URL = os.environ.get("BOT_URL")
+WEBHOOK_PATH = f"/{TOKEN}"
+WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
 
 def main():
+    bot = telegram.Bot(token = TOKEN)
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -417,7 +425,19 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, voz))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), mensagem))
 
-    app.run_polling()
+    #Inicia webhook
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT",3000)),
+        url_path=TOKEN,
+        webhook_url=WEBHOOK_URL,
+    )
+
+@flask_app.route('/')
+def home():
+    return "✅ Sophos Bot está rodando via webhook"
 
 if __name__ == "__main__":
+    import threading
+    threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=3000)).start()
     main()
