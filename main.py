@@ -410,9 +410,10 @@ WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
 
 def main():
-    bot = telegram.Bot(token = TOKEN)
+    bot = telegram.Bot(token=TOKEN)
     app = ApplicationBuilder().token(TOKEN).build()
-
+    
+    #Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("comandos", comandos))
     app.add_handler(CommandHandler("perfil", perfil_command))
@@ -428,7 +429,7 @@ def main():
     #Inicia webhook
     app.run_webhook(
         listen="0.0.0.0",
-        port=int(os.environ.get("PORT",3000)),
+        port=int(os.environ.get("PORT", 3000)),
         url_path=TOKEN,
         webhook_url=WEBHOOK_URL,
     )
