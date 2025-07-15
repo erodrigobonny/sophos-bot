@@ -140,8 +140,20 @@ async def resumir_contexto_antigo(user_id):
     prompt = "Resuma brevemente o seguinte histórico de conversas:\n\n" + "\n".join(antigas)
     resp = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role":"user","content":prompt}]
-    )
+        #messages=[{"role":"user","content":prompt}]
+    #)
+        messages=[
+        {
+            "role": "system",
+            "content": ESTILO_SOPHOS
+        },
+        {
+            "role": "user",
+            "content": pergunta  # ou mensagem["text"], depende do seu código
+        }
+    ]
+)
+        
     resumo = resp.choices[0].message.content
 
     # salva no Firebase e remove histórico bruto antigo
