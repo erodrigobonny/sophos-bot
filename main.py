@@ -145,16 +145,8 @@ async def resumir_contexto_antigo(user_id):
         ###original messages=[{"role":"user","content":prompt}]
     ###original)
         messages=[
-        {
-            "role": "system",
-            "content": ESTILO_SOPHOS
-        },
-        {
-            "role": "user",
-            "content":prompt  # ou mensagem["text"], depende do seu código
-        }
-    ]
-)
+        {"role": "system","content": ESTILO_SOPHOS},
+        {"role": "user","content":prompt}])
         
     resumo = resp.choices[0].message.content
 
