@@ -140,7 +140,7 @@ async def resumir_contexto_antigo(user_id):
     prompt = "Resuma brevemente o seguinte histórico de conversas:\n\n" + "\n".join(antigas)
     resp = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role":"user","content": ESTILO_SOPHOS}]
+        messages=[{"role":"user","content":prompt}]
     )
     resumo = resp.choices[0].message.content
 
