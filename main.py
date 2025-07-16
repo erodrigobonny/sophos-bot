@@ -1,14 +1,53 @@
-# V12.1 – Com perfil de personalidade (Etapa 3) + todas funcionalidades anteriores
+# V13 – Etapa 4
 import os
 import re
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import pytz
 import aiofiles
 import threading
 import openai
 import firebase_admin
+#____ ETAPA 4 - FUNÇÕES__________________________
+
+async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Será executado a cada 7 dias pelo JobQueue.
+    Calcula, para cada usuário, quais temas e emoções foram mais/menos frequentes
+    na última semana e grava em /padroes_semanais no Firebase.
+    """
+    hoje = datetime.utcnow().date()
+    semana_atras = hoje - timedelta(days=7)
+
+    usuarios = ref.get() or {}
+    for uid_str, dados in usuarios.items():
+        uid = int(uid_str)
+        # 1) emoções na última semana
+        emoc_entries = ref.child(uid_str).child("emocao").get() or {}
+        cont_emoc = {}
+        for e in emoc_entries.values():
+            data = datetime.fromisoformat(e["data"]).date()
+            if data >= semana_atras:
+                cont_emoc[e["valor"]] = cont_emoc.get(e["valor"], 0) + 1
+        # 2) temas na última semana
+        tema_entries = ref.child(uid_str).child("temas").get() or {}
+        cont_tema = {}
+        for tema, msgs in tema_entries.items():
+            for m in msgs.values():
+                data = datetime.fromisoformat(m["data"]).date()
+                if data >= semana_atras:
+                    cont_tema[tema] = cont_tema.get(tema, 0) + 1
+
+        pad = {
+            "de": semana_atras.isoformat(),
+            "ate": hoje.isoformat(),
+            "emocoes": cont_emoc,
+            "temas": cont_tema
+        }
+        # grava no Firebase
+        ref.child(uid_str).child("padroes_semanais").set(pad)
+        #____________________________________________________
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -33,13 +72,13 @@ HISTORY_LIMIT = 10
 SUMMARY_KEY = "resumo_anterior"
 
 # estilo padrão do bot
-ESTILO_SOPHOS = "Você é um filósofo estoico, visão tradicional, sagaz, firme, humor rápido, direto e analítico, mas com alma de engenheiro. Nada de papo furado."
+ESTILO_SOPHOS = "Você é um filósofo estoico, visão tradicional, sagaz, firme, humor rápido, proativo, direto e analítico, mas com alma de engenheiro. Nada de papo furado."
 # 2) Instruções de “role system” para lembrar perfil e contexto:
 #ROLE_PROMPT = (
     #"Siga estritamente o perfil do usuário ao formular respostas, "
     #"referenciando sempre as emoções e temas já registrados no histórico."
 
-###TOKEN =
+#TOKEN
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
 #import openai
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -163,7 +202,7 @@ async def resumir_contexto_antigo(user_id):
     # limpa o “contexto” bruto
     for key in list(todas.keys())[:-HISTORY_LIMIT]:
         caminho.child(key).delete()
-
+        
 # ── DETECÇÃO DE DATA ─────────────────────────────────────────────────────────────
 
 def detectar_data_hoje(texto):
@@ -304,6 +343,27 @@ async def resumo(update, context):
     texto = "📊 Resumo emocional:\n" + "\n".join(f"- {k}: {v}x" for k,v in cnt.items())
     await context.bot.send_message(update.effective_chat.id, texto)
 
+        # ____________ ETAPA 4_______________________
+async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    dados = ref.child(str(uid)).child("padroes_semanais").get()
+    if not dados:
+        await context.bot.send_message(update.effective_chat.id,
+            "🔍 Ainda não há análise semanal disponível. Tente novamente mais tarde.")
+        return
+
+    texto = (
+        f"📅 Padrões de {dados['de']} até {dados['ate']}:\n\n"
+        "🧠 Emoções: " +
+        ", ".join(f"{k}({v})" for k,v in dados["emocoes"].items()) + "\n"
+        "📂 Temas: " +
+        ", ".join(f"{k}({v})" for k,v in dados["temas"].items())
+    )
+    await context.bot.send_message(
+        update.effective_chat.id, texto, parse_mode="Markdown"
+    )
+#__________________________________________________________________
+
 async def conselheiro(update, context):
     uid = update.effective_user.id
     d = obter_dados(uid, "emocao")
@@ -428,6 +488,18 @@ def main():
         .token(TOKEN)
         .build()
     )
+    #_____ETAPA 4____________________
+    # agenda a análise semanal
+    # roda pela primeira vez assim que o bot subir e depois a cada 7 dias
+    app.job_queue.run_repeating(
+        analisar_padroes,
+        interval=timedelta(days=7),
+        first=0
+    )
+
+    # registra o comando /padroes
+    app.add_handler(CommandHandler("padroes", padroes_semanais_command))
+    #_______________________________
     
     #Handlers
     app.add_handler(CommandHandler("start", start))
