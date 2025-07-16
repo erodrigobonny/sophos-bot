@@ -332,6 +332,7 @@ async def comandos(update, context):
         "/consultar <tema> — histórico por tema\n"
         "/resumir <texto> — gerar resumo\n"
         "/conselheiro — conselho emocional\n"
+        "/padroes - padroes semanais\n"
         "/exportar — backup (Excel/TXT)\n"
         "/comandos — mostrar este menu"
     )
