@@ -75,7 +75,7 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
 
     usuarios = ref.get() or {}
     for uid_str, dados in usuarios.items():
-        uid = int(uid_str)
+        #uid = int(uid_str)
         # 1) emoções na última semana
         emoc_entries = ref.child(uid_str).child("emocao").get() or {}
         cont_emoc = {}
