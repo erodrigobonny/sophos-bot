@@ -83,6 +83,12 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
             data = datetime.fromisoformat(e["data"]).date()
             if data >= semana_atras:
                 cont_emoc[e["valor"]] = cont_emoc.get(e["valor"], 0) + 1
+            # escolhe a emoção com maior frequência
+            if cont_emoc:
+                humor_predominante = max(cont_emoc, key=cont_emoc.get)
+            else:
+            humor_predominante = None
+                
         # 2) temas na última semana
         tema_entries = ref.child(uid_str).child("temas").get() or {}
         cont_tema = {}
@@ -96,7 +102,8 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
             "de": semana_atras.isoformat(),
             "ate": hoje.isoformat(),
             "emocoes": cont_emoc,
-            "temas": cont_tema
+            "temas": cont_tema,
+            "humor_predominante": humor_predominante
         }
         # grava no Firebase
         ref.child(uid_str).child("padroes_semanais").set(pad)
@@ -353,13 +360,16 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         f"📅 Padrões de {dados['de']} até {dados['ate']}:\n\n"
+        f"🧠 Humor predominante: *{dados.get('humor_predominante','-')}*/n
         "🧠 Emoções: " +
         ", ".join(f"{k}({v})" for k,v in dados["emocoes"].items()) + "\n"
         "📂 Temas: " +
         ", ".join(f"{k}({v})" for k,v in dados["temas"].items())
     )
     await context.bot.send_message(
-        update.effective_chat.id, texto, parse_mode="Markdown"
+        update.effective_chat.id,
+        f"🧠 Humor predominante: *{dados['humor_predominante']}*",
+        parse_mode="Markdown"
     )
 #__________________________________________________________________
 
