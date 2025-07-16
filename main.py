@@ -87,7 +87,7 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
             if cont_emoc:
                 humor_predominante = max(cont_emoc, key=cont_emoc.get)
             else:
-            humor_predominante = humor_predominante
+            humor_predominante = None
                 
         # 2) temas na última semana
         tema_entries = ref.child(uid_str).child("temas").get() or {}
@@ -352,7 +352,7 @@ async def resumo(update, context):
         # ____________ ETAPA 4_______________________
 async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    dados = ref.child(str(uid)).child("padroes_semanais").get()
+    dados = ref.child(str(uid)).child("padroes_semanais").get() or {}
     if not dados:
         await context.bot.send_message(update.effective_chat.id,
             "🔍 Ainda não há análise semanal disponível. Tente novamente mais tarde.")
@@ -368,7 +368,7 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
     )
     await context.bot.send_message(
         update.effective_chat.id,
-        f"🧠 Humor predominante: *{dados['humor_predominante']}*",
+        texto,
         parse_mode="Markdown"
     )
 #__________________________________________________________________
