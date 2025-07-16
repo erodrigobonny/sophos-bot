@@ -9,8 +9,21 @@ import aiofiles
 import threading
 import openai
 import firebase_admin
+from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+    ContextTypes,
+)
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from openai import OpenAI
+from firebase_admin import credentials, db
+from flask import Flask, request
 #____ ETAPA 4 - FUNÇÕES__________________________
-
 async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
     """
     Será executado a cada 7 dias pelo JobQueue.
@@ -48,20 +61,6 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
         # grava no Firebase
         ref.child(uid_str).child("padroes_semanais").set(pad)
         #____________________________________________________
-from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters,
-    ContextTypes,
-)
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from openai import OpenAI
-from firebase_admin import credentials, db
-from flask import Flask, request
 
 # ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────────
 
