@@ -84,9 +84,9 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
             if data >= semana_atras:
                 cont_emoc[e["valor"]] = cont_emoc.get(e["valor"], 0) + 1
             # escolhe a emoção com maior frequência
-            if cont_emoc:
-                humor_predominante = max(cont_emoc, key=cont_emoc.get)
-            else:
+        if cont_emoc:
+            humor_predominante = max(cont_emoc, key=cont_emoc.get)
+        else:
             humor_predominante = None
                 
         # 2) temas na última semana
