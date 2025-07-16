@@ -87,7 +87,7 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
             if cont_emoc:
                 humor_predominante = max(cont_emoc, key=cont_emoc.get)
             else:
-            humor_predominante = None
+            humor_predominante = humor_predominante
                 
         # 2) temas na última semana
         tema_entries = ref.child(uid_str).child("temas").get() or {}
