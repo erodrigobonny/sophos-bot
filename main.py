@@ -23,44 +23,6 @@ from reportlab.lib.pagesizes import letter
 from openai import OpenAI
 from firebase_admin import credentials, db
 from flask import Flask, request
-#____ ETAPA 4 - FUNÇÕES__________________________
-async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Será executado a cada 7 dias pelo JobQueue.
-    Calcula, para cada usuário, quais temas e emoções foram mais/menos frequentes
-    na última semana e grava em /padroes_semanais no Firebase.
-    """
-    hoje = datetime.utcnow().date()
-    semana_atras = hoje - timedelta(days=7)
-
-    usuarios = ref.get() or {}
-    for uid_str, dados in usuarios.items():
-        uid = int(uid_str)
-        # 1) emoções na última semana
-        emoc_entries = ref.child(uid_str).child("emocao").get() or {}
-        cont_emoc = {}
-        for e in emoc_entries.values():
-            data = datetime.fromisoformat(e["data"]).date()
-            if data >= semana_atras:
-                cont_emoc[e["valor"]] = cont_emoc.get(e["valor"], 0) + 1
-        # 2) temas na última semana
-        tema_entries = ref.child(uid_str).child("temas").get() or {}
-        cont_tema = {}
-        for tema, msgs in tema_entries.items():
-            for m in msgs.values():
-                data = datetime.fromisoformat(m["data"]).date()
-                if data >= semana_atras:
-                    cont_tema[tema] = cont_tema.get(tema, 0) + 1
-
-        pad = {
-            "de": semana_atras.isoformat(),
-            "ate": hoje.isoformat(),
-            "emocoes": cont_emoc,
-            "temas": cont_tema
-        }
-        # grava no Firebase
-        ref.child(uid_str).child("padroes_semanais").set(pad)
-        #____________________________________________________
 
 # ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────────
 
@@ -101,6 +63,44 @@ WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
 EMOCOES = ["ansioso", "animado", "cansado", "focado", "triste", "feliz", "nervoso", "motivado"]
 TEMAS   = ["investimento", "treino", "relacionamento", "espiritualidade", "saúde", "trabalho"]
 
+#____ ETAPA 4: FUNÇÃO DE ANÁLISE SEMANAL__________________________
+async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Será executado a cada 7 dias pelo JobQueue.
+    Calcula, para cada usuário, quais temas e emoções foram mais/menos frequentes
+    na última semana e grava em /padroes_semanais no Firebase.
+    """
+    hoje = datetime.utcnow().date()
+    semana_atras = hoje - timedelta(days=7)
+
+    usuarios = ref.get() or {}
+    for uid_str, dados in usuarios.items():
+        uid = int(uid_str)
+        # 1) emoções na última semana
+        emoc_entries = ref.child(uid_str).child("emocao").get() or {}
+        cont_emoc = {}
+        for e in emoc_entries.values():
+            data = datetime.fromisoformat(e["data"]).date()
+            if data >= semana_atras:
+                cont_emoc[e["valor"]] = cont_emoc.get(e["valor"], 0) + 1
+        # 2) temas na última semana
+        tema_entries = ref.child(uid_str).child("temas").get() or {}
+        cont_tema = {}
+        for tema, msgs in tema_entries.items():
+            for m in msgs.values():
+                data = datetime.fromisoformat(m["data"]).date()
+                if data >= semana_atras:
+                    cont_tema[tema] = cont_tema.get(tema, 0) + 1
+
+        pad = {
+            "de": semana_atras.isoformat(),
+            "ate": hoje.isoformat(),
+            "emocoes": cont_emoc,
+            "temas": cont_tema
+        }
+        # grava no Firebase
+        ref.child(uid_str).child("padroes_semanais").set(pad)
+        
 # ── UTILITÁRIOS DE BANCO ─────────────────────────────────────────────────────────
 
 def inicializar_usuario(user_id):
