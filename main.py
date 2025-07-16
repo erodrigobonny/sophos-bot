@@ -177,6 +177,29 @@ def recuperar_memoria(user_id):
     m = ref.child(str(user_id)).child("memoria")
     if not m.get(): m.set({})
     return m.get() or {}
+#____ETAPA 5: MEMORIA GERAL_____________
+async def extrair_memoria_com_gpt(user_id: int, texto: str) -> dict:
+    """
+    Usa o GPT para identificar fatos livres e “importantes” no texto,
+    e devolve um dict onde cada chave seja um tópico e o valor a informação.
+    """
+    prompt = (
+        "Extraia deste texto os fatos ou informações que sejam úteis "
+        "para lembrar no futuro. Retorne apenas um JSON onde cada "
+        "chave seja um tópico e o valor seja a informação. Exemplo:\n"
+        '{ "profissão": "engenheiro", "filho": "Lucas" }\n\n'
+        f"Texto: {texto}"
+    )
+    resp = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    content = resp.choices[0].message.content
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return {}
+#__________________________________
 
 async def resumir_contexto_antigo(user_id):
     """
@@ -439,7 +462,11 @@ async def processar_texto(user_id, texto, update, context):
     await resumir_contexto_antigo(user_id)
     inicializar_usuario(user_id)
     salvar_contexto(user_id,texto)
-
+    #__ extrai a "memória geral" via GPT e salva no Firebase
+    memoria_nova = await extrair_memoria_com_gpt(user_id, texto)
+    for chave, valor in memoria_nova.items():
+        salvar_memoria_relativa(user_id, chave, valor)
+    #____________________________________________
     # data
     dhoje = detectar_data_hoje(texto)
     if dhoje:
