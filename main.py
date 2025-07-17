@@ -546,6 +546,7 @@ def main():
     app.add_handler(CommandHandler("consultar", consultar_tema))
     app.add_handler(CommandHandler("resumir", resumir))
     app.add_handler(CommandHandler("conselheiro", conselheiro))
+    app.add_handler(CommandHandler("padroes", padroes))
     app.add_handler(CommandHandler("exportar", exportar))
     app.add_handler(CallbackQueryHandler(feedback_handler))
     app.add_handler(MessageHandler(filters.VOICE, voz))
