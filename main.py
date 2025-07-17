@@ -178,7 +178,7 @@ def recuperar_memoria(user_id):
     if not m.get(): m.set({})
     return m.get() or {}
 #____ETAPA 5: MEMORIA GERAL_____________
-async def extrair_memoria_com_gpt(user_id: int, texto: str) -> dict:
+def extrair_memoria_com_gpt(user_id: int, texto: str) -> dict:
     """
     Usa o GPT para identificar fatos livres e “importantes” no texto,
     e devolve um dict onde cada chave seja um tópico e o valor a informação.
@@ -515,6 +515,7 @@ async def processar_texto(user_id, texto, update, context):
 async def mensagem(update, context):
     uid = update.effective_user.id
     txt = update.message.text.lower()
+    print("🔔 Chegou texto:", update.message.text)
     await processar_texto(uid, txt, update, context)
 
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
