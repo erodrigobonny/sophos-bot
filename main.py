@@ -566,4 +566,4 @@ def main():
 if __name__ == "__main__":
     
     #threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=3000)).start()
-    #main()
+    main()
