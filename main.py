@@ -190,7 +190,7 @@ async def extrair_memoria_com_gpt(user_id: int, texto: str) -> dict:
         '{ "profissão": "engenheiro", "filho": "Lucas" }\n\n'
         f"Texto: {texto}"
     )
-    resp = await client.chat.completions.create(
+    resp = client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}]
     )
@@ -463,7 +463,7 @@ async def processar_texto(user_id, texto, update, context):
     inicializar_usuario(user_id)
     salvar_contexto(user_id,texto)
     #__ extrai a "memória geral" via GPT e salva no Firebase
-    memoria_nova = await extrair_memoria_com_gpt(user_id, texto)
+    memoria_nova = extrair_memoria_com_gpt(user_id, texto)
     for chave, valor in memoria_nova.items():
         salvar_memoria_relativa(user_id, chave, valor)
     #____________________________________________
