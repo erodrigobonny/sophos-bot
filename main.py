@@ -54,7 +54,7 @@ firebase_admin.initialize_app(cred, {
 })
 ref = db.reference("/usuarios")
 #webhook
-flask_app = Flask(__name__)
+#flask_app = Flask(__name__)
 BOT_URL = os.environ.get("BOT_URL")
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
@@ -559,11 +559,11 @@ def main():
         webhook_url=WEBHOOK_URL,
     )
 
-@flask_app.route('/')
-def home():
-    return "✅ Sophos Bot está rodando via webhook"
+#@flask_app.route('/')
+#def home():
+    #return "✅ Sophos Bot está rodando via webhook"
 
 if __name__ == "__main__":
     
-    threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=3000)).start()
-    main()
+    #threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=3000)).start()
+    #main()
