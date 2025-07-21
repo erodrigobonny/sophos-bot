@@ -366,8 +366,8 @@ async def comandos(update, context):
         "/start — iniciar conversa\n"
         "/perfil — ver perfil\n"
         "/resumo — resumo emocional\n"
-        "/consultar <tema> — histórico por tema\n"
-        "/resumir <texto> — gerar resumo\n"
+        "/consultar \\<tema>\\ — histórico por tema\n"
+        "/resumir \\<texto>\\ — gerar resumo\n"
         "/conselheiro — conselho emocional\n"
         "/estatisticas — estatisticas\n"
         "/padroes — padroes semanais\n"
@@ -399,7 +399,7 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         f"📅 Padrões de {dados['de']} até {dados['ate']}:\n\n"
-        f"🧠 Humor predominante: *{dados.get('humor_predominante','-')}*\n"
+        f"🧠 Humor predominante: \\*{dados.get('humor_predominante','-')}\\*\n"
         "🧠 Emoções: " +
         ", ".join(f"{k}\\({v}\\)" for k,v in dados["emocoes"].items()) + "\n"
         "📂 Temas: " +
