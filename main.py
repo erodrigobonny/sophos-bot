@@ -363,9 +363,9 @@ async def start(update, context):
 async def comandos(update, context):
     msg = (
         "📌 *Comandos disponíveis:*\n"
-        "/start — iniciar conversa\n"
-        "/perfil — ver perfil\n"
-        "/resumo — resumo emocional\n"
+        "/start \\— iniciar conversa\n"
+        "/perfil \\— ver perfil\n"
+        "/resumo \\— resumo emocional\n"
         "/consultar \\<tema>\\ — histórico por tema\n"
         "/resumir \\<texto>\\ — gerar resumo\n"
         "/conselheiro — conselho emocional\n"
