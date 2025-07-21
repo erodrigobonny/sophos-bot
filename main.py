@@ -600,9 +600,14 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
             resumo[txt] = {"like": 0, "dislike": 0}
         resumo[txt][tp] += 1
 
-    linhas = ["📊 *Suas estatísticas de feedback:*"]
+    def escapar(texto):
+        # Escapa caracteres problemáticos para o MarkdownV2
+        chars = r"\_*[]()~`>#+-=|{}.!"
+        return "".join(f"\\{c}" if c in chars else c for c in texto)
+
+    linhas = ["📊 Suas estatísticas de feedback:"]
     for txt, cnt in resumo.items():
-        safe_txt = txt.replace("(", "\\(").replace(")", "\\)").replace("-", "\\-")
+        safe_txt = escapar(txt)
         linhas.append(f"- “{safe_txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
     if len(linhas) == 1:
         linhas.append("Nenhum feedback registrado ainda.")
