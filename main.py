@@ -64,7 +64,8 @@ WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
 #PINECONE
 PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
 PINECONE_ENVIRONMENT = os.environ["PINECONE_ENVIRONMENT"]
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
+pc = Pinecone(
+    api_key=PINECONE_API_KEY,
 vec_index = pinecone.Index("sophos-memoria")
 
 
