@@ -560,10 +560,11 @@ async def processar_texto(user_id, texto, update, context):
     prompt = f"{base}\n\nUsuário disse:\n{texto}"
     #resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
     # ── Chamada ao GPT com estilo dinâmico ────────────────────────────────────
-    messages = []
+    messages = [
+        {"role":"system", "content": ESTILO_SOPHOS},
+    ]
     if estilo_dinamico:
         messages.append({"role":"system", "content": estilo_dinamico})
-    # (aqui pode vir outra system message, ex: ESTILO_SOPHOS, se quiser)
     messages.append({"role":"user",   "content": prompt})
 
     resp = await client.chat.completions.create(
