@@ -363,16 +363,15 @@ async def start(update, context):
 async def comandos(update, context):
     msg = (
         "📌 *Comandos disponíveis:*\n"
-        "/start \\— iniciar conversa\n"
-        "/perfil \\— ver perfil\n"
-        "/resumo \\— resumo emocional\n"
-        "/consultar \\<tema>\\ — histórico por tema\n"
-        "/resumir \\<texto>\\ — gerar resumo\n"
-        "/conselheiro — conselho emocional\n"
-        #"/estatisticas — estatisticas\n"
-        "/padroes — padroes semanais\n"
-        "/exportar — backup (Excel/TXT)\n"
-        "/comandos — mostrar este menu"
+            "/start \\— iniciar conversa\n"
+            "/perfil \\— ver perfil\n"
+            "/resumo \\— resumo emocional\n"
+            "/consultar \\<tema\\> \\— histórico por tema\n"
+            "/resumir \\<texto\\> \\— gerar resumo\n"
+            "/conselheiro \\— conselho emocional\n"
+            "/padroes \\— padrões semanais\n"
+            "/exportar \\— backup \\(Excel\\/TXT\\)\n"
+            "/comandos \\— mostrar este menu"
     )
     await context.bot.send_message(update.effective_chat.id, msg, parse_mode="MarkdownV2")
 
