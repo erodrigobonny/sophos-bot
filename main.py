@@ -484,14 +484,17 @@ async def processar_texto(user_id, texto, update, context):
     inicializar_usuario(user_id)
     salvar_contexto(user_id,texto)
     #__ extrai a "memória geral" via GPT e salva no Firebase
-    memoria_nova = await extrair_memoria_com_gpt(user_id, texto)
+    memoria_nova = extrair_memoria_com_gpt(user_id, texto)
     for chave, valor in memoria_nova.items():
         atual = ref.child(str(user_id)).child("memoria").child(chave).get()
         if atual != valor:
             salvar_memoria_relativa(user_id, chave, valor)
     #___PINECONE ETAPA 5_________________________
             texto_para_emb = f"{chave}: {valor}"
-            emb = await client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)
+            emb = await client.embeddings.create(
+                model="text-embedding-3-small",
+                input=texto_para_emb
+            )
             vec_index.upsert([(f"{user_id}:{chave}", emb.data[0].embedding)])
     #____________________________________________
     # data
@@ -535,7 +538,7 @@ async def processar_texto(user_id, texto, update, context):
         base += "\n\n🔍 Contexto relevante:\n" + "\n".join(f"- {f}" for f in sem_ctx)
         #_____________
     prompt = f"{base}\n\nUsuário disse:\n{texto}"
-    resp = await client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
+    resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
     await context.bot.send_message(
@@ -592,11 +595,6 @@ def main():
         webhook_url=WEBHOOK_URL,
     )
 
-#@flask_app.route('/')
-#def home():
-    #return "✅ Sophos Bot está rodando via webhook"
-
 if __name__ == "__main__":
     
-    #threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=3000)).start()
     main()
