@@ -657,6 +657,5 @@ def main():
         webhook_url=WEBHOOK_URL,
     )
 
-if __name__ == "__main__":
-    
+if __name__ == "__main__":    
     main()
