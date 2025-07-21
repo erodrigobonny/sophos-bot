@@ -67,8 +67,14 @@ pc = Pinecone(
     api_key=PINECONE_API_KEY,
     spec=ServerlessSpec(cloud="gcp", region=PINECONE_ENVIRONMENT)
 )
+if "sophos-memoria" not in pc.list_indexes().names():
+    pc.create_index(
+        name="sophos-memoria",
+        dimension=1536,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="gcp", region=PINECONE_ENVIRONMENT)
+    )
 vec_index = pc.Index("sophos-memoria")
-
 
 EMOCOES = ["ansioso", "animado", "cansado", "focado", "triste", "feliz", "nervoso", "motivado"]
 TEMAS   = ["investimento", "treino", "relacionamento", "espiritualidade", "saúde", "trabalho"]
@@ -228,8 +234,6 @@ async def resumir_contexto_antigo(user_id):
     prompt = "Resuma brevemente o seguinte histórico de conversas:\n\n" + "\n".join(antigas)
     resp = client.chat.completions.create(
         model="gpt-4o",
-        ###original messages=[{"role":"user","content":prompt}]
-    ###original)
         messages=[
         {"role": "system","content": ESTILO_SOPHOS},
         {"role": "user","content":prompt}])
@@ -469,7 +473,7 @@ async def voz(update, context):
     await processar_texto(uid, texto, update, context)
 #_______________
 async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) -> list[str]:
-    emb = await client.embeddings.create(model="text-embedding-3-small", input=texto)
+    emb = client.embeddings.create(model="text-embedding-3-small", input=texto)
     res = vec_index.query(vector=emb.data[0].embedding, top_k=top_k, include_metadata=False)
     fragmentos = []
     for match in res.matches:
