@@ -370,11 +370,11 @@ async def comandos(update, context):
         "/resumir <texto> — gerar resumo\n"
         "/conselheiro — conselho emocional\n"
         "/estatisticas — estatisticas\n"
-        "/padroes - padroes semanais\n"
+        "/padroes — padroes semanais\n"
         "/exportar — backup (Excel/TXT)\n"
         "/comandos — mostrar este menu"
     )
-    await context.bot.send_message(update.effective_chat.id, msg, parse_mode="Markdown")
+    await context.bot.send_message(update.effective_chat.id, msg, parse_mode="MarkdownV2")
 
 async def resumo(update, context):
     uid = update.effective_user.id
@@ -399,7 +399,7 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         f"📅 Padrões de {dados['de']} até {dados['ate']}:\n\n"
-        f"🧠 Humor predominante: *{dados.get('humor_predominante','-')}*/n"
+        f"🧠 Humor predominante: *{dados.get('humor_predominante','-')}*\n"
         "🧠 Emoções: " +
         ", ".join(f"{k}({v})" for k,v in dados["emocoes"].items()) + "\n"
         "📂 Temas: " +
@@ -408,7 +408,7 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         update.effective_chat.id,
         texto,
-        parse_mode="Markdown"
+        parse_mode="MarkdownV2"
     )
 #__________________________________________________________________
 
@@ -617,6 +617,7 @@ def main():
     app.add_handler(CommandHandler("consultar", consultar_tema))
     app.add_handler(CommandHandler("resumir", resumir))
     app.add_handler(CommandHandler("conselheiro", conselheiro))
+    app.add_handler(CommandHandler("estatisticas", estatisticas))
     app.add_handler(CommandHandler("exportar", exportar))
     app.add_handler(CallbackQueryHandler(feedback_handler))
     app.add_handler(MessageHandler(filters.VOICE, voz))
@@ -644,7 +645,7 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
         "\n".join(linhas),
         parse_mode="Markdown"
     )
-    app.add_handler(CommandHandler("estatisticas", estatisticas))
+    
 #____________________________________
 
     #Inicia webhook
