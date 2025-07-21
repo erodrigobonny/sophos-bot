@@ -492,6 +492,18 @@ async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) ->
 async def processar_texto(user_id, texto, update, context):
     await resumir_contexto_antigo(user_id)
     inicializar_usuario(user_id)
+    # ── Ajuste de estilo com base em 👍/👎 ────────────────────────────────────────
+    fb = ref.child(str(user_id)).child("feedback_respostas").get() or {}
+    likes    = sum(1 for e in fb.values() if e["feedback"] == "like")
+    dislikes = sum(1 for e in fb.values() if e["feedback"] == "dislike")
+
+    if likes > dislikes + 5:
+        estilo_dinamico = "Prefira respostas sucintas e diretas."
+    elif dislikes > likes + 5:
+        estilo_dinamico = "Adote um tom mais explicativo e didático."
+    else:
+        estilo_dinamico = None
+    # ───────────────────────────────────────────────────────────────────────────
     salvar_contexto(user_id, texto)
 
     # 1) extrai “memória livre” via GPT (chamada síncrona)
@@ -546,7 +558,19 @@ async def processar_texto(user_id, texto, update, context):
         base += "\n\n🔍 Contexto relevante:\n" + "\n".join(f"- {f}" for f in sem_ctx)
 
     prompt = f"{base}\n\nUsuário disse:\n{texto}"
-    resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
+    #resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
+    # ── Chamada ao GPT com estilo dinâmico ────────────────────────────────────
+    messages = []
+    if estilo_dinamico:
+        messages.append({"role":"system", "content": estilo_dinamico})
+    # (aqui pode vir outra system message, ex: ESTILO_SOPHOS, se quiser)
+    messages.append({"role":"user",   "content": prompt})
+
+    resp = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages
+    )
+    # ───────────────────────────────────────────────────────────────────────────
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
 
