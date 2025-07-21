@@ -369,7 +369,7 @@ async def comandos(update, context):
         "/consultar \\<tema>\\ — histórico por tema\n"
         "/resumir \\<texto>\\ — gerar resumo\n"
         "/conselheiro — conselho emocional\n"
-        "/estatisticas — estatisticas\n"
+        #"/estatisticas — estatisticas\n"
         "/padroes — padroes semanais\n"
         "/exportar — backup (Excel/TXT)\n"
         "/comandos — mostrar este menu"
@@ -588,7 +588,7 @@ async def mensagem(update, context):
     print("🔔 Chegou texto:", update.message.text)
     await processar_texto(uid, txt, update, context)
 
-# ── COMANDO /estatisticas ──────────────────────────────────────────────────────
+# ── COMANDO estatisticas ──────────────────────────────────────────────────────
 async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     fb = ref.child(str(uid)).child("feedback_respostas").get() or {}
@@ -615,8 +615,7 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
         update.effective_chat.id,
         "\n".join(linhas),
         parse_mode="MarkdownV2"
-    )
-    
+    )    
 #____________________________________
     
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
