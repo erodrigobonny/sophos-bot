@@ -471,8 +471,11 @@ async def voz(update, context):
     texto = tr.text.lower()
     await context.bot.send_message(update.effective_chat.id, f"🗣️ Você disse: {texto}")
     await processar_texto(uid, texto, update, context)
-#_______________
+
+# ── BUSCA SEMÂNTICA ────────────────────────────────────────────────────────────
+
 async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) -> list[str]:
+    # gera embedding sem await
     emb = client.embeddings.create(model="text-embedding-3-small", input=texto)
     res = vec_index.query(vector=emb.data[0].embedding, top_k=top_k, include_metadata=False)
     fragmentos = []
@@ -483,30 +486,35 @@ async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) ->
             if val:
                 fragmentos.append(f"{chave}: {val}")
     return fragmentos
-    #__________
+
+# ── PROCESSAMENTO DE TEXTO ─────────────────────────────────────────────────────
 
 async def processar_texto(user_id, texto, update, context):
     await resumir_contexto_antigo(user_id)
     inicializar_usuario(user_id)
-    salvar_contexto(user_id,texto)
-    #__ extrai a "memória geral" via GPT e salva no Firebase
+    salvar_contexto(user_id, texto)
+
+    # 1) extrai “memória livre” via GPT (chamada síncrona)
     memoria_nova = extrair_memoria_com_gpt(user_id, texto)
+
+    # 2) salva e indexa cada novo fato
     for chave, valor in memoria_nova.items():
         atual = ref.child(str(user_id)).child("memoria").child(chave).get()
         if atual != valor:
             salvar_memoria_relativa(user_id, chave, valor)
-    #___PINECONE ETAPA 5_________________________
+
+            # gera embedding e faz upsert no Pinecone (sem await)
             texto_para_emb = f"{chave}: {valor}"
             emb = client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)
             vec_index.upsert([(f"{user_id}:{chave}", emb.data[0].embedding)])
-    #____________________________________________
-    # data
+
+    # 3) detecção de data “hoje é …”
     dhoje = detectar_data_hoje(texto)
     if dhoje:
         salvar_memoria_relativa(user_id, "data_atual", dhoje)
         await context.bot.send_message(update.effective_chat.id, f"📅 Data registrada: {dhoje}")
 
-    # emoções e temas
+    # 4) regras de emoção e tema (como antes) …
     for emo in EMOCOES:
         if emo in texto:
             salvar_dado(user_id, "emocao", emo)
@@ -515,35 +523,33 @@ async def processar_texto(user_id, texto, update, context):
                 if t in texto:
                     salvar_emocao_por_tema(user_id, t, emo)
             break
+
     for t in TEMAS:
         if t in texto:
             salvar_por_tema(user_id, t, texto)
             break
 
-    # memória relativa
-    if "meu filho é" in texto:
-        nome = texto.split("meu filho é")[-1].strip().split()[0]
-        salvar_memoria_relativa(user_id, "filho", nome)
-
-    # monta prompt
+    # 5) resto do fluxo: monta prompt, busca semântica, chama GPT e envia resposta
     cont = recuperar_contexto(user_id)
     mem  = recuperar_memoria(user_id)
     perfil = ref.child(str(user_id)).child("perfil").get() or {}
-    perfil_tipo = perfil.get("tipo")
+    perfil_tipo = perfil.get("tipo", "")
     base = cont
     if mem:
         base += "\n\nLembrar:\n" + "\n".join(f"- {k}: {v}" for k,v in mem.items())
     if perfil_tipo:
         base += f"\n\nPerfil: {perfil_tipo}"
-        #______________
+
+    # injeta contexto semântico
     sem_ctx = await buscar_contexto_semantico(user_id, texto)
     if sem_ctx:
         base += "\n\n🔍 Contexto relevante:\n" + "\n".join(f"- {f}" for f in sem_ctx)
-        #_____________
+
     prompt = f"{base}\n\nUsuário disse:\n{texto}"
     resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
+
     await context.bot.send_message(
         update.effective_chat.id,
         r,
@@ -555,7 +561,7 @@ async def mensagem(update, context):
     txt = update.message.text.lower()
     print("🔔 Chegou texto:", update.message.text)
     await processar_texto(uid, txt, update, context)
-
+    
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
 
 def main():
