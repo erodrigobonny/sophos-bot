@@ -497,10 +497,7 @@ async def processar_texto(user_id, texto, update, context):
             salvar_memoria_relativa(user_id, chave, valor)
     #___PINECONE ETAPA 5_________________________
             texto_para_emb = f"{chave}: {valor}"
-            emb = await client.embeddings.create(
-                model="text-embedding-3-small",
-                input=texto_para_emb
-            )
+            emb = client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)
             vec_index.upsert([(f"{user_id}:{chave}", emb.data[0].embedding)])
     #____________________________________________
     # data
