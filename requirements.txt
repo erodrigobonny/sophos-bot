@@ -5,4 +5,4 @@ pandas
 aiofiles
 flask
 reportlab
-pinecone-client==6.0.0
+pinecone>=2.2.1
