@@ -1,4 +1,4 @@
-# V13.1 – Etapa 4 com upgrade memória livre
+# V14 – Etapa 5
 import os
 import re
 import json
@@ -9,6 +9,7 @@ import aiofiles
 import threading
 import openai
 import firebase_admin
+import pinecone
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -59,6 +60,12 @@ ref = db.reference("/usuarios")
 BOT_URL = os.environ.get("BOT_URL")
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
+
+#PINECONE
+PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
+PINECONE_ENVIRONMENT = os.environ["PINECONE_ENVIRONMENT"]
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
+vec_index = pinecone.Index("sophos-memoria")
 
 
 EMOCOES = ["ansioso", "animado", "cansado", "focado", "triste", "feliz", "nervoso", "motivado"]
@@ -458,15 +465,34 @@ async def voz(update, context):
     texto = tr.text.lower()
     await context.bot.send_message(update.effective_chat.id, f"🗣️ Você disse: {texto}")
     await processar_texto(uid, texto, update, context)
+#_______________
+async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) -> list[str]:
+    emb = await client.embeddings.create(model="text-embedding-3-small", input=texto)
+    res = vec_index.query(vector=emb.data[0].embedding, top_k=top_k, include_metadata=False)
+    fragmentos = []
+    for match in res.matches:
+        if match.id.startswith(f"{user_id}:"):
+            _, chave = match.id.split(":", 1)
+            val = ref.child(str(user_id)).child("memoria").child(chave).get()
+            if val:
+                fragmentos.append(f"{chave}: {val}")
+    return fragmentos
+    #__________
 
 async def processar_texto(user_id, texto, update, context):
     await resumir_contexto_antigo(user_id)
     inicializar_usuario(user_id)
     salvar_contexto(user_id,texto)
     #__ extrai a "memória geral" via GPT e salva no Firebase
-    memoria_nova = extrair_memoria_com_gpt(user_id, texto)
+    memoria_nova = await extrair_memoria_com_gpt(user_id, texto)
     for chave, valor in memoria_nova.items():
-        salvar_memoria_relativa(user_id, chave, valor)
+        atual = ref.child(str(user_id)).child("memoria").child(chave).get()
+        if atual != valor:
+            salvar_memoria_relativa(user_id, chave, valor)
+    #___PINECONE ETAPA 5_________________________
+            texto_para_emb = f"{chave}: {valor}"
+            emb = await client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)
+            vec_index.upsert([(f"{user_id}:{chave}", emb.data[0].embedding)])
     #____________________________________________
     # data
     dhoje = detectar_data_hoje(texto)
@@ -503,8 +529,13 @@ async def processar_texto(user_id, texto, update, context):
         base += "\n\nLembrar:\n" + "\n".join(f"- {k}: {v}" for k,v in mem.items())
     if perfil_tipo:
         base += f"\n\nPerfil: {perfil_tipo}"
+        #______________
+    sem_ctx = await buscar_contexto_semantico(user_id, texto)
+    if sem_ctx:
+        base += "\n\n🔍 Contexto relevante:\n" + "\n".join(f"- {f}" for f in sem_ctx)
+        #_____________
     prompt = f"{base}\n\nUsuário disse:\n{texto}"
-    resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
+    resp = await client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
     await context.bot.send_message(
