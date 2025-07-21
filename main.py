@@ -591,10 +591,35 @@ def main():
     app.add_handler(CommandHandler("consultar", consultar_tema))
     app.add_handler(CommandHandler("resumir", resumir))
     app.add_handler(CommandHandler("conselheiro", conselheiro))
+    app.add_handler(CommandHandler("estatisticas", estatisticas))
     app.add_handler(CommandHandler("exportar", exportar))
     app.add_handler(CallbackQueryHandler(feedback_handler))
     app.add_handler(MessageHandler(filters.VOICE, voz))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), mensagem))
+
+# ── COMANDO /estatisticas ──────────────────────────────────────────────────────
+async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    fb = ref.child(str(uid)).child("feedback_respostas").get() or {}
+    resumo = {}
+    for e in fb.values():
+        txt = e["resposta"]
+        tp  = e["feedback"]  # "like" ou "dislike"
+        if txt not in resumo:
+            resumo[txt] = {"like": 0, "dislike": 0}
+        resumo[txt][tp] += 1
+
+    linhas = ["📊 *Suas estatísticas de feedback:*"]
+    for txt, cnt in resumo.items():
+        linhas.append(f"- “{txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
+    if len(linhas) == 1:
+        linhas.append("Nenhum feedback registrado ainda.")
+    await context.bot.send_message(
+        update.effective_chat.id,
+        "\n".join(linhas),
+        parse_mode="Markdown"
+    )
+#____________________________________
 
     #Inicia webhook
     app.run_webhook(
