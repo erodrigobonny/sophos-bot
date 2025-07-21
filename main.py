@@ -9,7 +9,7 @@ import aiofiles
 import threading
 import openai
 import firebase_admin
-import pinecone
+from pinecone import Pinecone, ServerlessSpec
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -56,7 +56,6 @@ firebase_admin.initialize_app(cred, {
 })
 ref = db.reference("/usuarios")
 #webhook
-#flask_app = Flask(__name__)
 BOT_URL = os.environ.get("BOT_URL")
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{BOT_URL}{WEBHOOK_PATH}"
@@ -66,6 +65,8 @@ PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
 PINECONE_ENVIRONMENT = os.environ["PINECONE_ENVIRONMENT"]
 pc = Pinecone(
     api_key=PINECONE_API_KEY,
+    spec=ServerlessSpec(cloud="gcp", region=PINECONE_ENVIRONMENT)
+)
 vec_index = pinecone.Index("sophos-memoria")
 
 
