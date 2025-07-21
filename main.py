@@ -67,7 +67,7 @@ pc = Pinecone(
     api_key=PINECONE_API_KEY,
     spec=ServerlessSpec(cloud="gcp", region=PINECONE_ENVIRONMENT)
 )
-vec_index = pinecone.Index("sophos-memoria")
+vec_index = pc.Index("sophos-memoria")
 
 
 EMOCOES = ["ansioso", "animado", "cansado", "focado", "triste", "feliz", "nervoso", "motivado"]
