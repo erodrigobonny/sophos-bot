@@ -643,7 +643,7 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         update.effective_chat.id,
         "\n".join(linhas),
-        parse_mode="Markdown"
+        parse_mode="MarkdownV2"
     )
     
 #____________________________________
