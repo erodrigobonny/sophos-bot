@@ -567,7 +567,7 @@ async def processar_texto(user_id, texto, update, context):
         messages.append({"role":"system", "content": estilo_dinamico})
     messages.append({"role":"user",   "content": prompt})
 
-    resp = await client.chat.completions.create(
+    resp = client.chat.completions.create(
         model="gpt-4o",
         messages=messages
     )
