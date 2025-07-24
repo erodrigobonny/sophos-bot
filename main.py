@@ -28,7 +28,7 @@ from firebase_admin import credentials, db
 # ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────────
 
 # quantas mensagens do histórico manter “cruas”
-HISTORY_LIMIT = 10
+HISTORY_LIMIT = 5
 
 # campo no Firebase onde guardamos o resumo das mensagens mais antigas
 SUMMARY_KEY = "resumo_anterior"
@@ -168,10 +168,6 @@ def buscar_por_tema(user_id, tema):
     d = ref.child(str(user_id)).child("temas").child(tema).get()
     return [x["texto"] for x in d.values()] if d else []
 
-#def salvar_contexto(user_id, texto):
- #   ref.child(str(user_id)).child("contexto").push({
-  #      "texto": texto, "data": datetime.now().isoformat()
-   # })
 def salvar_contexto(user_id, texto):
     contexto = ref.child(str(user_id)).child("contexto").get() or {}
     ultimos = [v["texto"] for v in contexto.values() if isinstance(v, dict)]
@@ -340,8 +336,7 @@ async def exportar(update, context: ContextTypes.DEFAULT_TYPE):
 async def feedback_handler(update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    #typ, fb, _ = q.data.split(":", 2)
-        #novo
+       #novo
     try:
         typ, fb = q.data.split(":", 1)
     except ValueError:
@@ -587,7 +582,6 @@ async def processar_texto(user_id, texto, update, context):
         r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
         print("❌ Erro na chamada OpenAI:", str(e))
     # ───────────────────────────────────────────────────────────────────────────
-    #r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
 
     await context.bot.send_message(
@@ -607,12 +601,6 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     fb = ref.child(str(uid)).child("feedback_respostas").get() or {}
     resumo = {}
-    #for e in fb.values():
-     #   txt = e["resposta"]
-      #  tp  = e["feedback"]  # "like" ou "dislike"
-       # if txt not in resumo:
-        #    resumo[txt] = {"like": 0, "dislike": 0}
-        #resumo[txt][tp] += 1
     for e in fb.values():
         if not all(k in e for k in ["resposta", "feedback"]):
             continue
