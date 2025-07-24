@@ -566,7 +566,7 @@ async def processar_texto(user_id, texto, update, context):
         base += "\n\n🔍 Contexto relevante:\n" + "\n".join(f"- {f}" for f in sem_ctx)
 
     prompt = f"{base}\n\nUsuário disse:\n{texto}"
-    #resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
+   
     # ── Chamada ao GPT com estilo dinâmico ────────────────────────────────────
     messages = [
         {"role":"system", "content": ESTILO_SOPHOS},
@@ -578,14 +578,14 @@ async def processar_texto(user_id, texto, update, context):
     #antigoresp = client.chat.completions.create(model="gpt-4o", messages=messages)
     
     try:
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages
-    )
-    r = resp.choices[0].message.content
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages
+        )
+        r = resp.choices[0].message.content
     except Exception as e:
-    r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
-    print("❌ Erro na chamada OpenAI:", str(e))
+        r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
+        print("❌ Erro na chamada OpenAI:", str(e))
     # ───────────────────────────────────────────────────────────────────────────
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
