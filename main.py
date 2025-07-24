@@ -23,7 +23,6 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from openai import OpenAI
 from firebase_admin import credentials, db
-#from flask import Flask, request
 
 # ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────────
 
