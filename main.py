@@ -614,13 +614,13 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
         #    resumo[txt] = {"like": 0, "dislike": 0}
         #resumo[txt][tp] += 1
     for e in fb.values():
-    if not all(k in e for k in ["resposta", "feedback"]):
-        continue
-    txt = e["resposta"]
-    tp  = e["feedback"]
-    if txt not in resumo:
-        resumo[txt] = {"like": 0, "dislike": 0}
-    resumo[txt][tp] += 1
+        if not all(k in e for k in ["resposta", "feedback"]):
+            continue
+        txt = e["resposta"]
+        tp  = e["feedback"]
+        if txt not in resumo:
+            resumo[txt] = {"like": 0, "dislike": 0}
+        resumo[txt][tp] += 1
     
     def escapar(texto):
         # Escapa caracteres problemáticos para o MarkdownV2
