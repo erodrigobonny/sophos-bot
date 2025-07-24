@@ -583,7 +583,7 @@ async def processar_texto(user_id, texto, update, context):
         messages=messages
     )
     r = resp.choices[0].message.content
-except Exception as e:
+    except Exception as e:
     r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
     print("❌ Erro na chamada OpenAI:", str(e))
     # ───────────────────────────────────────────────────────────────────────────
