@@ -168,7 +168,15 @@ def buscar_por_tema(user_id, tema):
     d = ref.child(str(user_id)).child("temas").child(tema).get()
     return [x["texto"] for x in d.values()] if d else []
 
+#def salvar_contexto(user_id, texto):
+ #   ref.child(str(user_id)).child("contexto").push({
+  #      "texto": texto, "data": datetime.now().isoformat()
+   # })
 def salvar_contexto(user_id, texto):
+    contexto = ref.child(str(user_id)).child("contexto").get() or {}
+    ultimos = [v["texto"] for v in contexto.values() if isinstance(v, dict)]
+    if ultimos and texto.strip() == ultimos[-1].strip():
+        return  # ignora repetição exata
     ref.child(str(user_id)).child("contexto").push({
         "texto": texto, "data": datetime.now().isoformat()
     })
@@ -567,10 +575,17 @@ async def processar_texto(user_id, texto, update, context):
         messages.append({"role":"system", "content": estilo_dinamico})
     messages.append({"role":"user",   "content": prompt})
 
+    #antigoresp = client.chat.completions.create(model="gpt-4o", messages=messages)
+    
+    try:
     resp = client.chat.completions.create(
         model="gpt-4o",
         messages=messages
     )
+    r = resp.choices[0].message.content
+except Exception as e:
+    r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
+    print("❌ Erro na chamada OpenAI:", str(e))
     # ───────────────────────────────────────────────────────────────────────────
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
@@ -592,13 +607,21 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     fb = ref.child(str(uid)).child("feedback_respostas").get() or {}
     resumo = {}
+    #for e in fb.values():
+     #   txt = e["resposta"]
+      #  tp  = e["feedback"]  # "like" ou "dislike"
+       # if txt not in resumo:
+        #    resumo[txt] = {"like": 0, "dislike": 0}
+        #resumo[txt][tp] += 1
     for e in fb.values():
-        txt = e["resposta"]
-        tp  = e["feedback"]  # "like" ou "dislike"
-        if txt not in resumo:
-            resumo[txt] = {"like": 0, "dislike": 0}
-        resumo[txt][tp] += 1
-
+    if not all(k in e for k in ["resposta", "feedback"]):
+        continue
+    txt = e["resposta"]
+    tp  = e["feedback"]
+    if txt not in resumo:
+        resumo[txt] = {"like": 0, "dislike": 0}
+    resumo[txt][tp] += 1
+    
     def escapar(texto):
         # Escapa caracteres problemáticos para o MarkdownV2
         chars = r"\_*[]()~`>#+-=|{}.!"
