@@ -587,7 +587,7 @@ async def processar_texto(user_id, texto, update, context):
         r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
         print("❌ Erro na chamada OpenAI:", str(e))
     # ───────────────────────────────────────────────────────────────────────────
-    r = resp.choices[0].message.content
+    #r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
 
     await context.bot.send_message(
