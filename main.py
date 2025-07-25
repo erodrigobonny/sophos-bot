@@ -666,15 +666,19 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
         resumo[txt][tp] += 1
         
     def escapar(texto):
-        chars = r"\_*[]()~`>#+-=|{}.!"
-        return "".join(f"\\{c}" if c in chars else c for c in texto)
+        chars = r"\_[]()~`>#+-=|{}.!"
+        texto_escapado = "".join(f"\\{c}" if c in chars else c for c in texto)
+
+	texto_escapado = re.sub(r'(?<!\*)\*(?![\w])', r'\*', texto_escapado)
+	texto_escapado = re.sub(r'(?<![\w])\*(?!\*)', r'\*', texto_escapado)
+	return texto_escapado
 
     linhas = ["📊 *Suas estatísticas de feedback:*"]
     for txt, cnt in resumo.items():
         safe_txt = escapar(txt)
         linhas.append(f"- “{safe_txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
     if len(linhas) == 1:
-        linhas.append("Nenhum feedback registrado ainda.")
+        linhas.append("Nenhum feedback registrado ainda._")
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="\n".join(linhas),
