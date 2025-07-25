@@ -682,7 +682,7 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
         safe_txt = escapar(txt)
         linhas.append(f"- “{safe_txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
     if len(linhas) == 1:
-        linhas.append("Nenhum feedback registrado ainda._")
+        linhas.append("_Nenhum feedback registrado ainda._")
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="\n".join(linhas),
