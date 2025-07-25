@@ -665,30 +665,27 @@ async def mensagem(update, context):
     await processar_texto(uid, txt, update, context)
 
 # ── COMANDO estatisticas ──────────────────────────────────────────────────────
-async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
+def escapar(texto):
+    chars = r"\_*[]()~`>#+-=|{}.!"
+    return "".join(f"\\{c}" if c in chars else c for c in texto)
+
+async def estatisticas(update, context):
     uid = update.effective_user.id
     fb = ref.child(str(uid)).child("feedback_respostas").get() or {}
     resumo = {}
     for e in fb.values():
         if not all(k in e for k in ["resposta", "feedback"]):
             continue
-        txt = e["resposta"]
-        tp  = e["feedback"]
-        if txt not in resumo:
-            resumo[txt] = {"like": 0, "dislike": 0}
-        resumo[txt][tp] += 1
-        
-    def escapar(texto):
-    # Lista de caracteres a escapar, tirando o '*'
-        chars = r"\_[]()~`>#+-=|{}.!"
-        return "".join(f"\\{c}" if c in chars else c for c in texto)
-    
-    linhas = ["📊 *Suas estatísticas de feedback:*"]
+        resumo.setdefault(e["resposta"], {"like":0,"dislike":0})[e["feedback"]] += 1
+
+    linhas = ["📊 Suas estatísticas de feedback:"]  # cabeçalho sem escapar
     for txt, cnt in resumo.items():
-        safe_txt = escapar(txt)
-        linhas.append(f"- “{safe_txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
+        safe_txt = escapar(txt)  # escapa somente o texto do usuário
+        linhas.append(f"- {safe_txt} (👍 {cnt['like']} | 👎 {cnt['dislike']})")
+
     if len(linhas) == 1:
-        linhas.append("_Nenhum feedback registrado ainda._")
+        linhas.append("Nenhum feedback registrado ainda.")
+
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="\n".join(linhas),
