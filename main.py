@@ -78,10 +78,6 @@ ESTILO_SOPHOS =  (
     "- sugira cortes de baixo impacto com 🗑️,\n"
     "- recomende complementos úteis que o usuário ainda não citou, com embasamento técnico."
     
-    "Se for apresentar ideias em blocos, use cabeçalhos com negrito simples usando *palavra* (Markdown). Não use símbolos especiais como sublinhado (_), colchetes ([]), ou emojis dentro de palavras em negrito. Evite gerar respostas com apenas um * solto, pois isso quebra a formatação."
-    "Se estiver apresentando uma lista de benefícios, argumentos ou características, use:\n"
-    "1. *Cabeçalho*: texto explicativo."
-    "Tudo deve ser formatado pensando em Markdown padrão (não MarkdownV2), a menos que indicado o contrário."
     
     "Exemplos de frases que pode usar:\n"
     "• “Toma esse suplemento em jejum ou antes do treino, senão vira xixi caro.” 💸\n"
@@ -456,22 +452,27 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="🔍 Ainda não há análise semanal disponível. Tente novamente mais tarde.",
-            parse_mode="MarkdownV2"
+            parse_mode="Markdown"
         )
         return
 
     # Usa função para escapar tudo corretamente, exceto as partes formatadas
-    def escapar_markdown(texto):
-        chars = r"\_[]()~`>#+-=|{}.!"
-        return "".join(f"\\{c}" if c in chars else c for c in texto)
+    #def escapar_markdown(texto):
+        #chars = r"\_[]()~`>#+-=|{}.!"
+        #return "".join(f"\\{c}" if c in chars else c for c in texto)
 
-    humor = escapar_markdown(dados.get("humor_predominante", "-"))
-
-    emocoes = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["emocoes"].items())
-    temas = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["temas"].items())
+    #humor = escapar_markdown(dados.get("humor_predominante", "-"))
+    #emocoes = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["emocoes"].items())
+    #temas = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["temas"].items())
+    
+    humor = dados.get("humor_predominante", "-")
+    emocoes = ", ".join(f"{k}: {v}" for k, v in dados.get("emocoes", {}).items())
+    temas = ", ".join(f"{k}: {v}" for k, v in dados.get("temas", {}).items())
+    
 
     texto = (
-        f"📅 Padrões de {escapar_markdown(dados['de'])} até {escapar_markdown(dados['ate'])}:\n\n"
+        #f"📅 Padrões de {escapar_markdown(dados['de'])} até {escapar_markdown(dados['ate'])}:\n\n"  
+        f"*📅 Padrões de {dados['de']} até {dados['ate']}*\n\n"
         f"🧠 Humor predominante: {humor}\n"
         f"🧠 Emoções: {emocoes}\n"
         f"📂 Temas: {temas}"
@@ -480,7 +481,7 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=texto,
-        parse_mode="MarkdownV2"
+        parse_mode="Markdown"
     )
 
 #__________________________________________________________________
@@ -670,9 +671,9 @@ async def mensagem(update, context):
     await processar_texto(uid, txt, update, context)
 
 # ── COMANDO estatisticas ──────────────────────────────────────────────────────
-def escapar(texto):
-    chars = r"\_*[]()~`>#+-=|{}.!"
-    return "".join(f"\\{c}" if c in chars else c for c in texto)
+#def escapar(texto):
+    #chars = r"\_*[]()~`>#+-=|{}.!"
+    #return "".join(f"\\{c}" if c in chars else c for c in texto)
 
 async def estatisticas(update, context):
     uid = update.effective_user.id
@@ -685,7 +686,7 @@ async def estatisticas(update, context):
 
     linhas = ["📊 Suas estatísticas de feedback:"]  # cabeçalho sem escapar
     for txt, cnt in resumo.items():
-        safe_txt = escapar(txt)  # escapa somente o texto do usuário
+        #safe_txt = escapar(txt)  # escapa somente o texto do usuário
         linhas.append(f"- {safe_txt} (👍 {cnt['like']} | 👎 {cnt['dislike']})")
 
     if len(linhas) == 1:
