@@ -77,6 +77,7 @@ ESTILO_SOPHOS =  (
     "- use 🔗 para mostrar conexões com sono, treino, dieta, estresse ou finanças,\n"
     "- sugira cortes de baixo impacto com 🗑️,\n"
     "- recomende complementos úteis que o usuário ainda não citou, com embasamento técnico."
+    "Se for apresentar ideias em bloco, quando for usar títulos ou cabeçalhos nas respostas com *negrito simples*, utilize *palavra* (Markdown básico), evite gerar respostas com apenas um '*' solto, pois isso quebra a formatação. "
     
     "Exemplos de frases que pode usar:\n"
     "• “Toma esse suplemento em jejum ou antes do treino, senão vira xixi caro.” 💸\n"
