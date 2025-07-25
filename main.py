@@ -448,23 +448,36 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     dados = ref.child(str(uid)).child("padroes_semanais").get() or {}
     if not dados:
-        await context.bot.send_message(update.effective_chat.id,
-            "🔍 Ainda não há análise semanal disponível. Tente novamente mais tarde.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🔍 Ainda não há análise semanal disponível. Tente novamente mais tarde.",
+            parse_mode="MarkdownV2"
+        )
         return
 
+    # Usa função para escapar tudo corretamente, exceto as partes formatadas
+    def escapar_markdown(texto):
+        chars = r"\_[]()~`>#+-=|{}.!"
+        return "".join(f"\\{c}" if c in chars else c for c in texto)
+
+    humor = escapar_markdown(dados.get("humor_predominante", "-"))
+
+    emocoes = ", ".join(f"{escapar_markdown(k)}\$begin:math:text${v}\\$end:math:text$" for k, v in dados["emocoes"].items())
+    temas = ", ".join(f"{escapar_markdown(k)}\$begin:math:text${v}\\$end:math:text$" for k, v in dados["temas"].items())
+
     texto = (
-        f"📅 Padrões de {dados['de']} até {dados['ate']}:\n\n"
-        f"🧠 Humor predominante: \\*{dados.get('humor_predominante','-')}\\*\n"
-        "🧠 Emoções: " +
-        ", ".join(f"{k}\\({v}\\)" for k,v in dados["emocoes"].items()) + "\n"
-        "📂 Temas: " +
-        ", ".join(f"{k}\\({v}\\)" for k,v in dados["temas"].items())
+        f"📅 Padrões de {escapar_markdown(dados['de'])} até {escapar_markdown(dados['ate'])}:\n\n"
+        f"🧠 Humor predominante: {humor}\n"
+        f"🧠 Emoções: {emocoes}\n"
+        f"📂 Temas: {temas}"
     )
+
     await context.bot.send_message(
-        update.effective_chat.id,
-        texto,
+        chat_id=update.effective_chat.id,
+        text=texto,
         parse_mode="MarkdownV2"
     )
+
 #__________________________________________________________________
 
 async def conselheiro(update, context):
