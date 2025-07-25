@@ -664,49 +664,22 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
         if txt not in resumo:
             resumo[txt] = {"like": 0, "dislike": 0}
         resumo[txt][tp] += 1
-
-    def escapar(texto):
-    # Substitui os padrões de Markdown (*negrito*, _itálico_) por marcadores especiais temporários
-        texto = texto.replace("*", "§§asterisco§§")
-        texto = texto.replace("_", "§§underline§§")
-    # Agora escapa os caracteres problemáticos
-        chars = r"\[]()~`>#+-=|{}.!"
-        texto = "".join(f"\\{c}" if c in chars else c for c in texto)
-    # Restaura os * e _ já intencionais
-        texto = texto.replace("§§asterisco§§", "\\*")
-        texto = texto.replace("§§underline§§", "\\_")
-
-    return texto
-    
-    #def escapar(texto):
-        # Escapa caracteres problemáticos para o MarkdownV2
-        #chars = r"\_*[]()~`>#+-=|{}.!"
-        #return "".join(f"\\{c}" if c in chars else c for c in texto)
         
-    linhas = ["📊 *Suas estatísticas de feedback:*"]
+    def escapar(texto):
+        chars = r"\_*[]()~`>#+-=|{}.!"
+        return "".join(f"\\{c}" if c in chars else c for c in texto)
+
+    linhas = [escapar("📊 *Suas estatísticas de feedback:*)"]
     for txt, cnt in resumo.items():
         safe_txt = escapar(txt)
         linhas.append(f"- “{safe_txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
-    # ⚠️ Adiciona mensagem padrão se não houver feedback
     if len(linhas) == 1:
         linhas.append("Nenhum feedback registrado ainda.")
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="\n".join(linhas),
+        update.effective_chat.id,
+        "\n".join(linhas),
         parse_mode="MarkdownV2"
-    )
-
-    #linhas = ["📊 \\*Suas estatísticas de feedback:\\*"]
-    #for txt, cnt in resumo.items():
-        #safe_txt = escapar(txt)
-        #linhas.append(f"- “{safe_txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
-    #if len(linhas) == 1:
-        #linhas.append("Nenhum feedback registrado ainda.")
-    #await context.bot.send_message(
-        #update.effective_chat.id,
-        #"\n".join(linhas),
-       # parse_mode="MarkdownV2"
-    #)    
+    )    
 #____________________________________
     
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
