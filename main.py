@@ -80,7 +80,7 @@ ESTILO_SOPHOS =  (
     
     "Se for apresentar ideias em blocos, use cabeçalhos com negrito simples usando *palavra* (Markdown). Não use símbolos especiais como sublinhado (_), colchetes ([]), ou emojis dentro de palavras em negrito. Evite gerar respostas com apenas um * solto, pois isso quebra a formatação."
     "Se estiver apresentando uma lista de benefícios, argumentos ou características, use:\n"
-    "1. Cabeçalho: texto explicativo."
+    "1. *Cabeçalho*: texto explicativo."
     "Tudo deve ser formatado pensando em Markdown padrão (não MarkdownV2), a menos que indicado o contrário."
     
     "Exemplos de frases que pode usar:\n"
