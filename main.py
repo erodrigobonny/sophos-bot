@@ -23,6 +23,11 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from openai import OpenAI
 from firebase_admin import credentials, db
+import unicodedata
+
+def remover_acentos(texto):
+    return unicodedata.normalize('NFKD', texto).encode('ascii', 'ignore').decode('ascii')
+
 
 # ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────────
 
@@ -567,8 +572,10 @@ async def processar_texto(user_id, texto, update, context):
 
             # gera embedding e faz upsert no Pinecone (sem await)
             texto_para_emb = f"{chave}: {valor}"
-            emb = client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)
-            vec_index.upsert([(f"{user_id}:{chave}", emb.data[0].embedding)])
+            emb = client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)   
+            chave_ascii = remover_acentos(chave)
+            vec_index.upsert([(f"{user_id}:{chave_ascii}", emb.data[0].embedding)])
+            #vec_index.upsert([(f"{user_id}:{chave}", emb.data[0].embedding)])
 
     # 3) detecção de data “hoje é …”
     dhoje = detectar_data_hoje(texto)
