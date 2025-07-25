@@ -676,10 +676,10 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
     if len(linhas) == 1:
         linhas.append("Nenhum feedback registrado ainda.")
     await context.bot.send_message(
-        update.effective_chat.id,
-        "\n".join(linhas),
+        chat_id=update.effective_chat.id,
+        text="\n".join(linhas),
         parse_mode="MarkdownV2"
-    )    
+    )
 #____________________________________
     
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
