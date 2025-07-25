@@ -681,15 +681,8 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
     def escapar(texto):
     # Lista de caracteres a escapar, tirando o '*'
         chars = r"\_[]()~`>#+-=|{}.!"
-        texto_escapado = "".join(f"\\{c}" if c in chars else c for c in texto)
-
-    # ⚠️ Corrige asteriscos soltos que causam erro no MarkdownV2
-    # Exemplo: "isso é * estranho", ou "apenas *"
-        texto_escapado = re.sub(r'(?<!\*)\*(?![\w])', r'\*', texto_escapado)  # * sozinho ou mal posicionado
-        texto_escapado = re.sub(r'(?<![\w])\*(?!\*)', r'\*', texto_escapado)  # início de palavra mal formatado
-        return texto_escapado
-	
-
+        return = "".join(f"\\{c}" if c in chars else c for c in texto)
+    
     linhas = ["📊 *Suas estatísticas de feedback:*"]
     for txt, cnt in resumo.items():
         safe_txt = escapar(txt)
