@@ -669,7 +669,7 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
         chars = r"\_*[]()~`>#+-=|{}.!"
         return "".join(f"\\{c}" if c in chars else c for c in texto)
 
-    linhas = [escapar("📊 *Suas estatísticas de feedback:*)"]
+    linhas = [escapar("📊 *Suas estatísticas de feedback:*")]
     for txt, cnt in resumo.items():
         safe_txt = escapar(txt)
         linhas.append(f"- “{safe_txt}” (👍 {cnt['like']} | 👎 {cnt['dislike']})")
