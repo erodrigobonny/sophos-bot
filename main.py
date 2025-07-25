@@ -672,8 +672,8 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
 
     # ⚠️ Corrige asteriscos soltos que causam erro no MarkdownV2
     # Exemplo: "isso é * estranho", ou "apenas *"
-        texto_escapado = re.sub(r'(?<!\)\(?![\w])', r'\*', texto_escapado)  # * sozinho ou mal posicionado
-        texto_escapado = re.sub(r'(?<![\w])\(?!\)', r'\*', texto_escapado)  # início de palavra mal formatado
+        texto_escapado = re.sub(r'(?<!\*)\*(?![\w])', r'\*', texto_escapado)  # * sozinho ou mal posicionado
+        texto_escapado = re.sub(r'(?<![\w])\*(?!\*)', r'\*', texto_escapado)  # início de palavra mal formatado
         return texto_escapado
 	
 
