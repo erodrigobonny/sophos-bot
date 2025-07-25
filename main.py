@@ -695,7 +695,7 @@ async def estatisticas(update, context):
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="\n".join(linhas),
-        parse_mode="MarkdownV2"
+        parse_mode="Markdown"
     )
 #____________________________________
     
