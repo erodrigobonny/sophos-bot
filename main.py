@@ -462,8 +462,8 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
 
     humor = escapar_markdown(dados.get("humor_predominante", "-"))
 
-    emocoes = ", ".join(f"{escapar_markdown(k)}\$begin:math:text${v}\\$end:math:text$" for k, v in dados["emocoes"].items())
-    temas = ", ".join(f"{escapar_markdown(k)}\$begin:math:text${v}\\$end:math:text$" for k, v in dados["temas"].items())
+    emocoes = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["emocoes"].items())
+    temas = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["temas"].items())
 
     texto = (
         f"📅 Padrões de {escapar_markdown(dados['de'])} até {escapar_markdown(dados['ate'])}:\n\n"
@@ -681,7 +681,7 @@ async def estatisticas(update, context: ContextTypes.DEFAULT_TYPE):
     def escapar(texto):
     # Lista de caracteres a escapar, tirando o '*'
         chars = r"\_[]()~`>#+-=|{}.!"
-        return = "".join(f"\\{c}" if c in chars else c for c in texto)
+        return "".join(f"\\{c}" if c in chars else c for c in texto)
     
     linhas = ["📊 *Suas estatísticas de feedback:*"]
     for txt, cnt in resumo.items():
