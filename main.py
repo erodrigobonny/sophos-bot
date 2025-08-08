@@ -265,7 +265,7 @@ def extrair_memoria_com_gpt(user_id: int, texto: str) -> dict:
         f"Texto: {texto}"
     )
     resp = client.chat.completions.create(
-        model="gpt-5o",
+        model="gpt-4o",
         messages=[{"role": "user", "content": prompt}]
     )
     content = resp.choices[0].message.content
@@ -495,7 +495,7 @@ async def conselheiro(update, context):
     prompt = "Com base nas emoções recentes:\n" + \
         "\n".join(f"- {e['data'][:10]}: {e['valor']}" for e in list(d.values())[-7:]) + \
         "\nMe dê um conselho baseado nisso."
-    resp = client.chat.completions.create(model="gpt-5o", messages=[{"role":"user","content":prompt}])
+    resp = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":prompt}])
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
     await context.bot.send_message(
@@ -648,7 +648,7 @@ async def processar_texto(user_id, texto, update, context):
     
     try:
         resp = client.chat.completions.create(
-            model="gpt-5o",
+            model="gpt-4o",
             messages=messages
         )
         r = resp.choices[0].message.content
