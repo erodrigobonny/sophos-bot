@@ -1,6 +1,6 @@
 python-telegram-bot[job-queue,webhooks]==22
 firebase-admin
-openai
+openai>=1.35.0
 pandas
 aiofiles
 flask
