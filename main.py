@@ -880,7 +880,7 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, voz))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), mensagem))
 	app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & (~filters.COMMAND), handle_media))
-	app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
+    app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
 
     #Inicia webhook
     app.run_webhook(
