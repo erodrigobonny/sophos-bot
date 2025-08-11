@@ -457,14 +457,7 @@ async def padroes_semanais_command(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Usa função para escapar tudo corretamente, exceto as partes formatadas
-    #def escapar_markdown(texto):
-        #chars = r"\_[]()~`>#+-=|{}.!"
-        #return "".join(f"\\{c}" if c in chars else c for c in texto)
-
-    #humor = escapar_markdown(dados.get("humor_predominante", "-"))
-    #emocoes = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["emocoes"].items())
-    #temas = ", ".join(f"{escapar_markdown(k)}$begin:math:text${v}$end:math:text$" for k, v in dados["temas"].items())
-    
+       
     humor = dados.get("humor_predominante", "-")
     emocoes = ", ".join(f"{k}: {v}" for k, v in dados.get("emocoes", {}).items())
     temas = ", ".join(f"{k}: {v}" for k, v in dados.get("temas", {}).items())
@@ -669,9 +662,6 @@ async def mensagem(update, context):
     await processar_texto(uid, txt, update, context)
 
 # ── COMANDO estatisticas ──────────────────────────────────────────────────────
-#def escapar(texto):
-    #chars = r"\_*[]()~`>#+-=|{}.!"
-    #return "".join(f"\\{c}" if c in chars else c for c in texto)
 
 async def estatisticas(update, context):
     uid = update.effective_user.id
