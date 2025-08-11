@@ -25,6 +25,28 @@ from openai import OpenAI
 from firebase_admin import credentials, db
 import unicodedata
 
+# extras para leitura de arquivos/imagens (tentamos com libs locais; se não existirem, caímos para fallback)
+try:
+    from PyPDF2 import PdfReader
+except Exception:
+    PdfReader = None
+
+try:
+    import docx  # python-docx
+except Exception:
+    docx = None
+
+try:
+    import pytesseract
+    from PIL import Image
+except Exception:
+    pytesseract = None
+    Image = None
+
+# adicional: tipos do telegram usados no handler de arquivos
+from telegram import Document, Update
+#________________________________________________________
+
 def remover_acentos(texto):
     return unicodedata.normalize('NFKD', texto).encode('ascii', 'ignore').decode('ascii')
 
@@ -677,6 +699,151 @@ async def estatisticas(update, context):
         parse_mode="Markdown"
     )
 #____________________________________
+
+# ---------------- Leitura de mídias (photos/docs) ----------------
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Trata fotos e documentos. Tenta extrair texto localmente.
+    Suporta: PDF, DOCX, XLSX, PNG, JPG.
+    Se extracao falhar, pede pro usuario explicar o que deseja.
+    """
+    uid = update.effective_user.id
+    file_obj = None
+    file_name = None
+    temp_path = None
+    try:
+        # foto(s)
+        if update.message.photo:
+            file_obj = await update.message.photo[-1].get_file()
+            file_name = f"photo_{uid}.jpg"
+        elif update.message.document:
+            doc: Document = update.message.document
+            file_obj = await doc.get_file()
+            file_name = doc.file_name or f"doc_{uid}"
+        else:
+            await context.bot.send_message(update.effective_chat.id, "Tipo de arquivo não suportado.")
+            return
+        # download para temp
+        fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(file_name)[1] if file_name else "")
+        os.close(fd)
+        await file_obj.download_to_drive(temp_path)
+        await context.bot.send_message(update.effective_chat.id, "📥 Arquivo recebido. Processando...")
+        extracted_text = ""
+        # PDF
+        if temp_path.lower().endswith(".pdf") and PdfReader:
+            try:
+                reader = PdfReader(temp_path)
+                pages = []
+                for p in reader.pages:
+                    try:
+                        pages.append(p.extract_text() or "")
+                    except:
+                        continue
+                extracted_text = "\n".join(pages).strip()
+            except Exception as e:
+                print("Erro extraindo PDF:", e)
+        # DOCX
+        elif temp_path.lower().endswith(".docx") and docx:
+            try:
+                docx_doc = docx.Document(temp_path)
+                extracted_text = "\n".join(p.text for p in docx_doc.paragraphs).strip()
+            except Exception as e:
+                print("Erro extraindo DOCX:", e)
+        # XLSX (simple: convert first sheet to text table)
+        elif temp_path.lower().endswith((".xls", ".xlsx")):
+            try:
+                df = pd.read_excel(temp_path, dtype=str)
+                extracted_text = df.fillna("").to_csv(sep="\t", index=False)
+            except Exception as e:
+                print("Erro extraindo XLSX:", e)
+        # Imagens: OCR se pytesseract disponível
+        elif temp_path.lower().endswith((".png", ".jpg", ".jpeg")) and pytesseract and Image:
+            try:
+                img = Image.open(temp_path)
+                extracted_text = pytesseract.image_to_string(img)
+            except Exception as e:
+                print("Erro OCR:", e)
+        else:
+            # fallback: se for imagem mas sem OCR, ou formato não tratado
+            extracted_text = ""
+
+        # se não extraiu texto, pergunta ao usuário o que deseja
+        if not extracted_text:
+            await context.bot.send_message(update.effective_chat.id,
+                                           "Não consegui extrair texto automaticamente deste arquivo. Diga em uma frase o que você quer que eu faça com ele (resumir, analisar, checar dados, etc).")
+            context.user_data["ultimo_arquivo_temp"] = temp_path
+            return
+
+        # usa GPT para analisar o texto extraído
+        prompt = (f"Recebi um arquivo enviado pelo usuário. Extraí o seguinte texto:\n\n{extracted_text[:3000]}\n\n"
+                  "Faça uma análise prática e direta: resuma os pontos principais, identifique dados/valores relevantes, riscos/erros e proponha ações práticas.")
+        try:
+            resposta = chamar_gpt5_sync([{"role":"system","content":ESTILO_SOPHOS},
+                                        {"role":"user","content":prompt}], temperature=0.0, max_tokens=800)
+        except Exception:
+            resposta = "⚠️ Erro ao analisar o documento via GPT."
+        context.user_data["ultima_resposta"] = resposta
+        await context.bot.send_message(update.effective_chat.id, "📄 Análise:\n" + resposta, reply_markup=marcadores_feedback("documento"))
+    except Exception as e:
+        print("Erro handle_media:", e)
+        traceback.print_exc(file=sys.stdout)
+        await context.bot.send_message(update.effective_chat.id, "⚠️ Falha ao processar o arquivo.")
+    finally:
+        # se gravado para posterior uso, não remover; caso contrário, apaga
+        if temp_path and not context.user_data.get("ultimo_arquivo_temp") == temp_path:
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+
+# comando para processar último arquivo com instrução do usuário
+async def processar_ultimo_arquivo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    temp_path = context.user_data.get("ultimo_arquivo_temp")
+    if not temp_path or not os.path.exists(temp_path):
+        await context.bot.send_message(update.effective_chat.id, "Nenhum arquivo pendente encontrado.")
+        return
+    instr = " ".join(context.args) if context.args else ""
+    if not instr:
+        await context.bot.send_message(update.effective_chat.id, "Diga o que quer que eu faça com o arquivo: resumir/analisar/validar/extrair dados.")
+        return
+
+    extracted_text = ""
+    try:
+        if temp_path.lower().endswith(".pdf") and PdfReader:
+            reader = PdfReader(temp_path)
+            pages = [p.extract_text() or "" for p in reader.pages]
+            extracted_text = "\n".join(pages).strip()
+        elif temp_path.lower().endswith(".docx") and docx:
+            docx_doc = docx.Document(temp_path)
+            extracted_text = "\n".join(p.text for p in docx_doc.paragraphs).strip()
+        elif temp_path.lower().endswith((".xls", ".xlsx")):
+            df = pd.read_excel(temp_path, dtype=str)
+            extracted_text = df.fillna("").to_csv(sep="\t", index=False)
+        elif temp_path.lower().endswith((".png", ".jpg", ".jpeg")) and pytesseract and Image:
+            img = Image.open(temp_path)
+            extracted_text = pytesseract.image_to_string(img)
+    except Exception as e:
+        print("Erro re-extraindo:", e)
+
+    if not extracted_text:
+        await context.bot.send_message(update.effective_chat.id, "Não consegui extrair texto automaticamente deste arquivo mesmo agora.")
+        return
+
+    prompt = (f"Recebi um arquivo e extraí este texto:\n\n{extracted_text[:3000]}\n\n"
+              f"Instrução do usuário: {instr}\n\nResponda de forma prática e direta.")
+    try:
+        resposta = chamar_gpt5_sync([{"role":"system","content":ESTILO_SOPHOS},
+                                    {"role":"user","content":prompt}], temperature=0.0, max_tokens=800)
+    except Exception:
+        resposta = "⚠️ Erro ao analisar o documento via GPT."
+    await context.bot.send_message(update.effective_chat.id, "📄 Resultado:\n" + resposta, reply_markup=marcadores_feedback("documento"))
+
+    # cleanup
+    try:
+        os.remove(temp_path)
+    except:
+        pass
+    context.user_data.pop("ultimo_arquivo_temp", None)
     
 # ── INICIALIZAÇÃO ────────────────────────────────────────────────────────────────
 
@@ -712,6 +879,8 @@ def main():
     app.add_handler(CallbackQueryHandler(feedback_handler))
     app.add_handler(MessageHandler(filters.VOICE, voz))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), mensagem))
+	app.add_handler(MessageHandler((filters.PHOTO | filters.Document.ALL) & (~filters.COMMAND), handle_media))
+	app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
 
     #Inicia webhook
     app.run_webhook(
