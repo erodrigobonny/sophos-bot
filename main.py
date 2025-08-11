@@ -88,12 +88,6 @@ ESTILO_SOPHOS =  (
 
     "Você é o braço direito do usuário em decisões que exigem pensamento crítico e responsabilidade. Entregue verdade, clareza e direção. Sem enrolação."
 )
-#Seja direto, crítico e pragmático. Avalie com base em dados concretos, não tenha medo de emitir opinião. Use linguagem clara, com frases curtas. Priorize análise prática em vez de ficar recomendando “procurar profissional”. Se algo é exagerado ou desnecessário, diga. Se está adequado, elogie com base em fundamentos. Evite generalizações vagas. Fale como um conselheiro experiente que sabe o que está dizendo."
-
-# 2) Instruções de “role system” para lembrar perfil e contexto:
-#ROLE_PROMPT = (
-    #"Siga estritamente o perfil do usuário ao formular respostas, "
-    #"referenciando sempre as emoções e temas já registrados no histórico."
 
 #TOKEN
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
@@ -145,7 +139,6 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
 
     usuarios = ref.get() or {}
     for uid_str, dados in usuarios.items():
-        #uid = int(uid_str)
         # 1) emoções na última semana
         emoc_entries = ref.child(uid_str).child("emocao").get() or {}
         cont_emoc = {}
@@ -588,8 +581,7 @@ async def processar_texto(user_id, texto, update, context):
             emb = client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)   
             chave_ascii = remover_acentos(chave)
             vec_index.upsert([(f"{user_id}:{chave_ascii}", emb.data[0].embedding)])
-            #vec_index.upsert([(f"{user_id}:{chave}", emb.data[0].embedding)])
-
+            
     # 3) detecção de data “hoje é …”
     dhoje = detectar_data_hoje(texto)
     if dhoje:
@@ -674,7 +666,6 @@ async def estatisticas(update, context):
 
     linhas = ["📊 Suas estatísticas de feedback:"]  # cabeçalho sem escapar
     for txt, cnt in resumo.items():
-        #safe_txt = escapar(txt)  # escapa somente o texto do usuário
         linhas.append(f"- {safe_txt} (👍 {cnt['like']} | 👎 {cnt['dislike']})")
 
     if len(linhas) == 1:
