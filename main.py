@@ -9,6 +9,7 @@ import aiofiles
 import threading
 import openai
 import firebase_admin
+import traceback
 from pinecone import Pinecone, ServerlessSpec
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
