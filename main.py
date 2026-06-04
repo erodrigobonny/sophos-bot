@@ -1358,6 +1358,8 @@ def main():
     app.add_handler(CommandHandler("estatisticas", estatisticas))
     app.add_handler(CommandHandler("exportar", exportar))
     app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
+    app.add_handler(CommandHandler("garmin", garmin_command))
+
 
     app.add_handler(CallbackQueryHandler(feedback_handler))
     app.add_handler(MessageHandler(filters.VOICE, voz))
