@@ -7,7 +7,7 @@ import sys
 import tempfile
 import traceback
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from garminconnect import Garmin
 
 import pandas as pd
@@ -553,7 +553,7 @@ def definir_perfil_usuario(user_id):
 
 
 async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
-    hoje = datetime.utcnow().date()
+    hoje = datetime.now(timezone.utc).date()
     semana_atras = hoje - timedelta(days=7)
 
     usuarios = ref.get() or {}
