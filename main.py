@@ -596,6 +596,139 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
             "temas": cont_tema,
             "humor_predominante": humor_predominante
         })
+# =============================================================================
+# GARMIN
+# =============================================================================
+
+def salvar_tokens_firebase(tokens_path):
+    try:
+        with open(tokens_path, "r") as f:
+            tokens = f.read()
+        ref.child("config").child("garmin_tokens").set({
+            "data": tokens,
+            "atualizado": agora_iso()
+        })
+        print("✅ Tokens Garmin salvos no Firebase.")
+    except Exception as e:
+        print("Erro ao salvar tokens:", e)
+
+
+def conectar_garmin():
+    try:
+        tokens_fb = ref.child("config").child("garmin_tokens").get()
+        if tokens_fb and tokens_fb.get("data"):
+            with open(GARMIN_TOKENS, "w") as f:
+                f.write(tokens_fb["data"])
+            client = Garmin()
+            client.login(GARMIN_TOKENS)
+            print("✅ Garmin conectado via token.")
+            return client
+    except Exception:
+        print("⚠️ Token expirado. Fazendo login completo...")
+
+    client = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+    client.login()
+    client.garth.dump(GARMIN_TOKENS)
+    salvar_tokens_firebase(GARMIN_TOKENS)
+    return client
+
+
+def coletar_dados_garmin(dias=7):
+    client = conectar_garmin()
+    hoje = datetime.now().date()
+    inicio = hoje - timedelta(days=dias)
+
+    atividades = client.get_activities_by_date(
+        inicio.isoformat(),
+        hoje.isoformat()
+    )
+
+    resumo_ativ = []
+    for a in atividades:
+        resumo_ativ.append({
+            "tipo": a.get("activityType", {}).get("typeKey"),
+            "nome": a.get("activityName"),
+            "data": a.get("startTimeLocal", "")[:10],
+            "distancia_km": round((a.get("distance") or 0) / 1000, 2),
+            "duracao_min": round((a.get("duration") or 0) / 60, 1),
+            "fc_media": a.get("averageHR"),
+            "fc_max": a.get("maxHR"),
+            "calorias": a.get("calories"),
+        })
+
+    def safe(fn, *args):
+        try:
+            return fn(*args)
+        except Exception:
+            return None
+
+    return {
+        "periodo": f"{inicio.isoformat()} a {hoje.isoformat()}",
+        "atividades": resumo_ativ,
+        "hrv": safe(client.get_hrv_data, hoje.isoformat()),
+        "sono": safe(client.get_sleep_data, hoje.isoformat()),
+        "stress": safe(client.get_stress_data, hoje.isoformat()),
+        "body_battery": safe(
+            client.get_body_battery,
+            inicio.isoformat(),
+            hoje.isoformat()
+        ),
+    }
+
+
+async def garmin_command(update, context):
+    uid = update.effective_user.id
+    dias = 7
+    if context.args:
+        try:
+            dias = int(context.args[0])
+        except ValueError:
+            pass
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"⌚ Puxando seus dados Garmin ({dias} dias)..."
+    )
+
+    try:
+        dados = coletar_dados_garmin(dias)
+    except Exception as e:
+        print("Erro Garmin:", e)
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "⚠️ Falha ao conectar no Garmin. Verifique as variáveis de ambiente."
+        )
+        return
+
+    prompt = f"""
+Analise meus dados de treino como um coach de endurance experiente.
+
+DADOS GARMIN ({dados['periodo']}):
+{json.dumps(dados, ensure_ascii=False, default=str)}
+
+Entregue:
+1. Resumo de carga e recuperação
+2. Correlação HRV/sono/stress com os treinos
+3. Principal ponto de atenção
+4. Recomendação para a próxima semana
+"""
+
+    resposta = chamar_gpt_sync(
+        [
+            {"role": "system", "content": ESTILO_SOPHOS},
+            {"role": "user", "content": prompt}
+        ],
+        model=MODEL_MAIN,
+        max_tokens=1200
+    )
+
+    context.user_data["ultima_resposta"] = resposta
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        limitar_texto("⌚ Análise Garmin:\n\n" + resposta),
+        reply_markup=marcadores_feedback("garmin")
+    )
 
 
 # =============================================================================
