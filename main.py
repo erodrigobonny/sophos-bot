@@ -4,9 +4,7 @@ import re
 import json
 from datetime import datetime, timedelta
 import pandas as pd
-import pytz
 import aiofiles
-import threading
 import openai
 import firebase_admin
 import tempfile
@@ -22,8 +20,6 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
 from openai import OpenAI
 from firebase_admin import credentials, db
 import unicodedata
@@ -56,62 +52,28 @@ def remover_acentos(texto):
 
 # ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────────
 
-# quantas mensagens do histórico manter “cruas”
-HISTORY_LIMIT = 5
+# quantas mensagens do histórico manter "cruas"
+HISTORY_LIMIT = 3
 
 # campo no Firebase onde guardamos o resumo das mensagens mais antigas
 SUMMARY_KEY = "resumo_anterior"
 
-# estilo padrão do bot
-ESTILO_SOPHOS =  (
-    "Seu usuário é disciplinado, estoico, direto, cético e não tolera respostas evasivas. Ele quer clareza, análise técnica e sugestões práticas. " 
-    "Você é o Sophos, um assistente digital com personalidade crítica, analítica, tradicional, prática e orientada para performance. "
-    "Seu estilo é de mentor experiente: fala na lata, sem rodeios, com tom firme, crítico, falante, coloquial, tom encorajador e, quando cabe, um toque de humor rápido e sagaz. "
-    "Use linguagem clara, objetiva, e inclua comentários francos, até irônicos se for pertinente. "
-    "Se for resgatar mensagens antigas, faça isso *somente* se houver conexão clara com a pergunta atual. Evite bancar o vidente puxando contexto que não foi solicitado. Se não fizer sentido, não puxe memória nenhuma. "
-    "Evite trazer temas antigos ou contextos passados se não forem diretamente relevantes à pergunta atual. Foco na dúvida apresentada, sem extrapolar com conselhos sobre outros hábitos a não ser que o usuário peça explicitamente ou a conexão seja óbvia e direta."
-    
-    "Você valoriza dados técnicos (como RDA, UL, AI, faixas séricas, indicadores financeiros—ROI, CAGR, orçamento, métricas de produtividade—KPIs, tempo dedicado, estatísticas de conflito, etc.), "
-    "especialmente em temas como nutrição, suplementação, saúde, treino, finanças, produtividade, relacionamentos, família e carreira. "
-    
-    "Sempre que possível, complemente com instruções práticas, como: \n"
-    "- melhores horários para ações (suplementos, reuniões, treinos),\n"
-    "- combinações que fazem sentido (ex: ferro com vitamina C),\n"
-    "- interações a evitar (ex: zinco longe de magnésio ou cafeína),\n"
-    "- e o que pode ser cortado ou reduzido. "
-    
-    "Quando o usuário enviar listas de itens—suplementos, treinos, hábitos, despesas, interações familiares—você deve:\n"
-    "- avaliar item por item com dados concretos (números, faixas de referência, métricas),\n"
-    "- indicar se algo está acima ou abaixo do ideal,\n"
-    "- dar contexto com impacto fisiológico, emocional, prático ou financeiro,\n"
-    "- oferecer visão 360° de fatores correlacionados,\n"
-    "- concluir com um veredito prático: “vale a pena manter”, “isso está exagerado”, “pode descartar sem culpa”."
-    
-    "Evite frases genéricas como “procure um profissional”—o usuário já sabe disso. Aja como o especialista. "
-    "Use bom senso e conhecimento técnico mesmo quando não houver consenso absoluto. "
-    "Você também deve ser proativo e estratégico: antecipe dúvidas que surgiriam naturalmente, e vá além da pergunta imediata. "
-    "Ao analisar algo, correlacione dados e contextos macros relevantes, mesmo que o usuário não tenha pedido diretamente. Faça inferências práticas: conecte performance com sono, alimentação com produtividade, gastos com ROI, treinos com recuperação, suplementos com exames. "
-    "Quando identificar padrões, aponte riscos ocultos, oportunidades negligenciadas ou prioridades invertidas. Exemplo:\n"
-	"•	Se houver muito foco em suplementação, mas nenhuma menção a sono ou carga calórica, alerte.\n"
-	"•	Se houver esforço em treinos, mas falta de estratégia de recuperação, destaque o gargalo.\n"
-	"•	Se os investimentos são diversificados, mas sem objetivo claro, questione."
-    "Seja o radar do usuário: ligue pontos que ele pode não ter ligado ainda. Isso te torna mais que um consultor técnico — te torna um conselheiro de confiança. "
-    "Incorpore pitadas de humor sagaz e emojis pontuais quando fizer sentido para dinamizar a leitura. Utilize emonjis estratégicos para enfatizar pontos fortes, riscos, pontos de atenção, descarte, horário, foco, energia, etc. "
-    "Se fizer sentido:\n"
-    "- indique horários ideais com ⏰ (ex: vitamina D com gordura no café da manhã),\n"
-    "- use 🔗 para mostrar conexões com sono, treino, dieta, estresse ou finanças,\n"
-    "- sugira cortes de baixo impacto com 🗑️,\n"
-    "- recomende complementos úteis que o usuário ainda não citou, com embasamento técnico."
-    
-    
-    "Exemplos de frases que pode usar:\n"
-    "• “Toma esse suplemento em jejum ou antes do treino, senão vira xixi caro.” 💸\n"
-    "• “Esse gasto tá dentro da meta, mas não tá gerando retorno; pode cortar sem culpa.” ✂️\n"
-    "• “Esse combo de hábitos tá ok, só cuidado pra não virar refém de planilha.” 📊\n"
-    "• “Ferro? Só com vitamina C e longe do café, senão é dinheiro indo pro ralo.” ☕🚫\n"
-    "• “Essa dose tá segura, mas não faz milagre. Se quiser cortar, não vai mudar sua vida.” 🧪🤷"
+# modelo principal e modelo econômico para tarefas utilitárias
+MAIN_MODEL = "gpt-5"
+MINI_MODEL = "gpt-4o-mini"
 
-    "Você é o braço direito do usuário em decisões que exigem pensamento crítico e responsabilidade. Entregue verdade, clareza e direção. Sem enrolação."
+# estilo padrão do bot
+ESTILO_SOPHOS = (
+    "Você é o Sophos — mentor digital estoico, analítico e orientado a performance. "
+    "Seu usuário é disciplinado, direto e cético: quer clareza, dados e ação, não rodeios. "
+    "Tom firme, coloquial, encoraja quando cabe, irônico quando pertinente. Sem 'procure um profissional'.\n\n"
+    "Valorize dados técnicos (RDA, UL, faixas séricas, ROI, CAGR, KPIs) em saúde, treino, finanças e carreira. "
+    "Sempre que relevante: sugira horários ideais ⏰, combinações que funcionam 🔗, interações a evitar e cortes 🗑️.\n\n"
+    "Ao avaliar listas (suplementos, hábitos, despesas): analise item a item com métricas concretas, indique o que está fora do ideal, "
+    "correlacione com sono/treino/dieta/finanças e conclua com veredito prático.\n\n"
+    "Seja proativo: ligue pontos que o usuário não ligou, aponte riscos ocultos e prioridades invertidas. "
+    "Use emojis estratégicos para riscos, atenção, descartes e horários. "
+    "Resgate contexto anterior *somente* se houver conexão direta com a pergunta atual."
 )
 
 #TOKEN
@@ -256,7 +218,7 @@ def recuperar_contexto(user_id, limite=HISTORY_LIMIT):
     if resumo_node.get("texto"):
         partes.append(f"**Resumo anterior:** {resumo_node['texto']}")
 
-    # 2) Puxe as últimas mensagens “cruas”
+    # 2) Puxe as últimas mensagens "cruas"
     d = ref.child(str(user_id)).child("contexto").get() or {}
     ult = list(d.values())[-limite:]
     for x in ult:
@@ -272,18 +234,19 @@ def recuperar_memoria(user_id):
 #____ETAPA 5: MEMORIA GERAL_____________
 def extrair_memoria_com_gpt(user_id: int, texto: str) -> dict:
     """
-    Usa o GPT para identificar fatos livres e “importantes” no texto,
+    Usa o GPT para identificar fatos livres e "importantes" no texto,
     e devolve um dict onde cada chave seja um tópico e o valor a informação.
     """
+    if len(texto) < 40:
+        return {}
     prompt = (
-        "Extraia deste texto os fatos ou informações que sejam úteis "
-        "para lembrar no futuro. Retorne apenas um JSON onde cada "
-        "chave seja um tópico e o valor seja a informação. Exemplo:\n"
-        '{ "profissão": "engenheiro", "filho": "Lucas" }\n\n'
+        "Extraia deste texto os fatos úteis para lembrar no futuro. "
+        "Retorne apenas JSON: {\"tópico\": \"informação\"}. "
+        "Se não houver fatos memoráveis, retorne {}.\n\n"
         f"Texto: {texto}"
     )
     resp = client.chat.completions.create(
-        model="gpt-5",
+        model=MINI_MODEL,
         messages=[{"role": "user", "content": prompt}]
     )
     content = resp.choices[0].message.content
@@ -305,20 +268,18 @@ async def resumir_contexto_antigo(user_id):
     if len(textos) <= HISTORY_LIMIT:
         return  # nada a resumir ainda
 
-    # pega as mensagens “antigas” além do HISTORY_LIMIT
+    # pega as mensagens "antigas" além do HISTORY_LIMIT
     antigas = textos[:-HISTORY_LIMIT]
-    prompt = "Resuma brevemente o seguinte histórico de conversas:\n\n" + "\n".join(antigas)
+    prompt = "Resuma em 2-3 frases os pontos principais deste histórico:\n\n" + "\n".join(antigas)
     resp = client.chat.completions.create(
-        model="gpt-5",
-        messages=[
-        {"role": "system","content": ESTILO_SOPHOS},
-        {"role": "user","content":prompt}])
+        model=MINI_MODEL,
+        messages=[{"role": "user", "content": prompt}])
         
     resumo = resp.choices[0].message.content
 
     # salva no Firebase e remove histórico bruto antigo
     ref.child(str(user_id)).child(SUMMARY_KEY).set({"texto": resumo, "data": datetime.now().isoformat()})
-    # limpa o “contexto” bruto
+    # limpa o "contexto" bruto
     for key in list(todas.keys())[:-HISTORY_LIMIT]:
         caminho.child(key).delete()
         
@@ -413,7 +374,7 @@ async def feedback_handler(update, context: ContextTypes.DEFAULT_TYPE):
         typ, fb = q.data.split(":", 1)
     except ValueError:
         await q.message.reply_text("⚠️ Feedback mal formatado.")
-        #novo
+        return
     uid = q.from_user.id
     tx  = context.user_data.get("ultima_resposta", "")
     registrar_feedback(uid, typ, fb, tx)
@@ -506,7 +467,7 @@ async def conselheiro(update, context):
     prompt = "Com base nas emoções recentes:\n" + \
         "\n".join(f"- {e['data'][:10]}: {e['valor']}" for e in list(d.values())[-7:]) + \
         "\nMe dê um conselho baseado nisso."
-    resp = client.chat.completions.create(model="gpt-5", messages=[{"role":"user","content":prompt}])
+    resp = client.chat.completions.create(model=MINI_MODEL, messages=[{"role":"user","content":prompt}])
     r = resp.choices[0].message.content
     context.user_data["ultima_resposta"] = r
     await context.bot.send_message(
@@ -534,7 +495,7 @@ async def resumir(update, context):
         return
     orig = " ".join(context.args)
     resp = client.chat.completions.create(
-        model="gpt-5",
+        model=MINI_MODEL,
         messages=[{"role":"user","content":f"Resuma de forma prática:\n\n{orig}"}]
     )
     r = resp.choices[0].message.content
@@ -560,7 +521,7 @@ async def voz(update, context):
 
 # ── BUSCA SEMÂNTICA ────────────────────────────────────────────────────────────
 
-async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) -> list[str]:
+async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 3) -> list[str]:
     # gera embedding sem await
     emb = client.embeddings.create(model="text-embedding-3-small", input=texto)
     res = vec_index.query(vector=emb.data[0].embedding, top_k=top_k, include_metadata=False)
@@ -578,10 +539,12 @@ async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) ->
 async def processar_texto(user_id, texto, update, context):
     await resumir_contexto_antigo(user_id)
     inicializar_usuario(user_id)
+    texto_lower = texto.lower()
+
     # ── Ajuste de estilo com base em 👍/👎 ────────────────────────────────────────
     fb = ref.child(str(user_id)).child("feedback_respostas").get() or {}
-    likes    = sum(1 for e in fb.values() if e["feedback"] == "like")
-    dislikes = sum(1 for e in fb.values() if e["feedback"] == "dislike")
+    likes    = sum(1 for e in fb.values() if e.get("feedback") == "like")
+    dislikes = sum(1 for e in fb.values() if e.get("feedback") == "dislike")
 
     if likes > dislikes + 5:
         estilo_dinamico = "Prefira respostas sucintas e diretas."
@@ -592,7 +555,7 @@ async def processar_texto(user_id, texto, update, context):
     # ───────────────────────────────────────────────────────────────────────────
     salvar_contexto(user_id, texto)
 
-    # 1) extrai “memória livre” via GPT (chamada síncrona)
+    # 1) extrai "memória livre" via GPT (apenas para mensagens com conteúdo relevante)
     memoria_nova = extrair_memoria_com_gpt(user_id, texto)
 
     # 2) salva e indexa cada novo fato
@@ -600,59 +563,57 @@ async def processar_texto(user_id, texto, update, context):
         atual = ref.child(str(user_id)).child("memoria").child(chave).get()
         if atual != valor:
             salvar_memoria_relativa(user_id, chave, valor)
-
-            # gera embedding e faz upsert no Pinecone (sem await)
             texto_para_emb = f"{chave}: {valor}"
-            emb = client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)   
+            emb = client.embeddings.create(model="text-embedding-3-small", input=texto_para_emb)
             chave_ascii = remover_acentos(chave)
             vec_index.upsert([(f"{user_id}:{chave_ascii}", emb.data[0].embedding)])
-            
-    # 3) detecção de data “hoje é …”
-    dhoje = detectar_data_hoje(texto)
+
+    # 3) detecção de data "hoje é …"
+    dhoje = detectar_data_hoje(texto_lower)
     if dhoje:
         salvar_memoria_relativa(user_id, "data_atual", dhoje)
         await context.bot.send_message(update.effective_chat.id, f"📅 Data registrada: {dhoje}")
 
-    # 4) regras de emoção e tema (como antes) …
+    # 4) regras de emoção e tema usando texto normalizado
     for emo in EMOCOES:
-        if emo in texto:
+        if emo in texto_lower:
             salvar_dado(user_id, "emocao", emo)
             await context.bot.send_message(update.effective_chat.id, f"🧠 Emoção '{emo}' registrada.")
             for t in TEMAS:
-                if t in texto:
+                if t in texto_lower:
                     salvar_emocao_por_tema(user_id, t, emo)
             break
 
     for t in TEMAS:
-        if t in texto:
+        if t in texto_lower:
             salvar_por_tema(user_id, t, texto)
             break
 
-    # 5) resto do fluxo: monta prompt, busca semântica, chama GPT e envia resposta
+    # 5) monta prompt com contexto e memória
     cont = recuperar_contexto(user_id)
     mem  = recuperar_memoria(user_id)
     perfil = ref.child(str(user_id)).child("perfil").get() or {}
     perfil_tipo = perfil.get("tipo", "")
     base = cont
     if mem:
-        base += "\n\nLembrar:\n" + "\n".join(f"- {k}: {v}" for k,v in mem.items())
+        # cap at 8 items — Pinecone semantic search handles the rest
+        mem_items = list(mem.items())[:8]
+        base += "\n\nLembrar:\n" + "\n".join(f"- {k}: {v}" for k, v in mem_items)
     if perfil_tipo:
         base += f"\n\nPerfil: {perfil_tipo}"
 
-    # injeta contexto semântico
+    # injeta contexto semântico relevante à pergunta atual
     sem_ctx = await buscar_contexto_semantico(user_id, texto)
     if sem_ctx:
         base += "\n\n🔍 Contexto relevante:\n" + "\n".join(f"- {f}" for f in sem_ctx)
 
     prompt = f"{base}\n\nUsuário disse:\n{texto}"
-   
+
     # ── Chamada ao GPT com estilo dinâmico ────────────────────────────────────
-    messages = [
-        {"role":"system", "content": ESTILO_SOPHOS},
-    ]
+    messages = [{"role": "system", "content": ESTILO_SOPHOS}]
     if estilo_dinamico:
-        messages.append({"role":"system", "content": estilo_dinamico})
-    messages.append({"role":"user",   "content": prompt})
+        messages.append({"role": "system", "content": estilo_dinamico})
+    messages.append({"role": "user", "content": prompt})
     
     try:
         resp = client.chat.completions.create(
@@ -674,8 +635,8 @@ async def processar_texto(user_id, texto, update, context):
 
 async def mensagem(update, context):
     uid = update.effective_user.id
-    txt = update.message.text.lower()
-    print("🔔 Chegou texto:", update.message.text)
+    txt = update.message.text
+    print("🔔 Chegou texto:", txt)
     await processar_texto(uid, txt, update, context)
 
 # ── COMANDO estatisticas ──────────────────────────────────────────────────────
@@ -689,9 +650,9 @@ async def estatisticas(update, context):
             continue
         resumo.setdefault(e["resposta"], {"like":0,"dislike":0})[e["feedback"]] += 1
 
-    linhas = ["📊 Suas estatísticas de feedback:"]  # cabeçalho sem escapar
+    linhas = ["📊 Suas estatísticas de feedback:"]
     for txt, cnt in resumo.items():
-        linhas.append(f"- {safe_txt} (👍 {cnt['like']} | 👎 {cnt['dislike']})")
+        linhas.append(f"- {txt[:80]} (👍 {cnt['like']} | 👎 {cnt['dislike']})")
 
     if len(linhas) == 1:
         linhas.append("Nenhum feedback registrado ainda.")
@@ -778,11 +739,15 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # usa GPT para analisar o texto extraído
-        prompt = (f"Recebi um arquivo enviado pelo usuário. Extraí o seguinte texto:\n\n{extracted_text[:3000]}\n\n"
-                  "Faça uma análise prática e direta: resuma os pontos principais, identifique dados/valores relevantes, riscos/erros e proponha ações práticas.")
+        prompt = (f"Arquivo do usuário — texto extraído:\n\n{extracted_text[:3000]}\n\n"
+                  "Analise: resuma pontos principais, identifique dados/valores relevantes, riscos/erros e proponha ações práticas.")
         try:
-            resposta = chamar_gpt5_sync([{"role":"system","content":ESTILO_SOPHOS},
-                                        {"role":"user","content":prompt}], temperature=0.0, max_tokens=800)
+            resp_doc = client.chat.completions.create(
+                model=MINI_MODEL,
+                messages=[{"role": "system", "content": ESTILO_SOPHOS}, {"role": "user", "content": prompt}],
+                max_tokens=800,
+            )
+            resposta = resp_doc.choices[0].message.content
         except Exception:
             resposta = "⚠️ Erro ao analisar o documento via GPT."
         context.user_data["ultima_resposta"] = resposta
@@ -832,11 +797,15 @@ async def processar_ultimo_arquivo_cmd(update: Update, context: ContextTypes.DEF
         await context.bot.send_message(update.effective_chat.id, "Não consegui extrair texto automaticamente deste arquivo mesmo agora.")
         return
 
-    prompt = (f"Recebi um arquivo e extraí este texto:\n\n{extracted_text[:3000]}\n\n"
-              f"Instrução do usuário: {instr}\n\nResponda de forma prática e direta.")
+    prompt = (f"Arquivo do usuário — texto extraído:\n\n{extracted_text[:3000]}\n\n"
+              f"Instrução: {instr}\n\nResponda de forma prática e direta.")
     try:
-        resposta = chamar_gpt5_sync([{"role":"system","content":ESTILO_SOPHOS},
-                                    {"role":"user","content":prompt}], temperature=0.0, max_tokens=800)
+        resp_doc = client.chat.completions.create(
+            model=MINI_MODEL,
+            messages=[{"role": "system", "content": ESTILO_SOPHOS}, {"role": "user", "content": prompt}],
+            max_tokens=800,
+        )
+        resposta = resp_doc.choices[0].message.content
     except Exception:
         resposta = "⚠️ Erro ao analisar o documento via GPT."
     await context.bot.send_message(update.effective_chat.id, "📄 Resultado:\n" + resposta, reply_markup=marcadores_feedback("documento"))
