@@ -116,6 +116,9 @@ Regras:
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 BOT_URL = os.environ.get("BOT_URL")
+GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
+GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
+GARMIN_TOKENS = os.environ.get("GARMIN_TOKENS", "/tmp/garmin_tokens")
 FIREBASE_URL = os.environ.get(
     "FIREBASE_URL",
     "https://sophos-ddbed-default-rtdb.firebaseio.com"
