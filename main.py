@@ -8,6 +8,7 @@ import tempfile
 import traceback
 import unicodedata
 from datetime import datetime, timedelta
+from garminconnect import Garmin
 
 import pandas as pd
 import aiofiles
