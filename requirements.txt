@@ -14,4 +14,4 @@ pytz>=2024.1
 # opcional
 flask>=2.0.0
 python-dotenv>=1.0.0
-
+garminconnect>=0.2.22
