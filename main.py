@@ -730,6 +730,194 @@ Entregue:
         reply_markup=marcadores_feedback("garmin")
     )
 
+def coletar_relatorio(dias=7):
+    client = conectar_garmin()
+    hoje = datetime.now().date()
+    inicio = hoje - timedelta(days=dias)
+
+    def safe(fn, *args):
+        try:
+            return fn(*args)
+        except Exception:
+            return None
+
+    # TREINOS (1 chamada para todo o período)
+    atividades = client.get_activities_by_date(
+        inicio.isoformat(), hoje.isoformat()
+    ) or []
+
+    treinos = []
+    for a in atividades:
+        vel = a.get("averageSpeed")
+        treinos.append({
+            "tipo": a.get("activityType", {}).get("typeKey"),
+            "data": a.get("startTimeLocal", "")[:10],
+            "dist_km": round((a.get("distance") or 0) / 1000, 2),
+            "dur_min": round((a.get("duration") or 0) / 60, 1),
+            "fc_med": a.get("averageHR"),
+            "fc_max": a.get("maxHR"),
+            "pace": round(1000 / vel / 60, 2) if vel else None,
+            "elev_m": round(a.get("elevationGain") or 0),
+            "cadencia": a.get("averageRunningCadenceInStepsPerMinute")
+                or a.get("averageBikingCadenceInRevPerMinute"),
+            "potencia_w": a.get("avgPower"),
+            "te_aero": a.get("aerobicTrainingEffect"),
+            "te_anaero": a.get("anaerobicTrainingEffect"),
+            "tss": a.get("trainingStressScore"),
+            "cal": a.get("calories"),
+        })
+
+    def soma_tipo(chave_tipo, divisor=1000):
+        return round(sum(
+            (a.get("distance") or 0) for a in atividades
+            if chave_tipo in a.get("activityType", {}).get("typeKey", "").lower()
+        ) / divisor, 1)
+
+    totais = {
+        "natacao_m": round(soma_tipo("swim", 1)),
+        "bike_km": soma_tipo("cycling"),
+        "corrida_km": soma_tipo("running"),
+        "calorias": round(sum(a.get("calories") or 0 for a in atividades)),
+        "total_sessoes": len(atividades),
+    }
+
+    # RECUPERAÇÃO (máx. 7 dias)
+    dias_rec = min(dias, 7)
+    hrv_l, sono_l, stress_l = [], [], []
+
+    for i in range(dias_rec):
+        d = (hoje - timedelta(days=i)).isoformat()
+
+        hrv = safe(client.get_hrv_data, d)
+        v = (hrv or {}).get("hrvSummary", {}).get("lastNight")
+        if v:
+            hrv_l.append(v)
+
+        sono = safe(client.get_sleep_data, d)
+        seg = (sono or {}).get("dailySleepDTO", {}).get("sleepTimeSeconds")
+        if seg:
+            sono_l.append(seg / 3600)
+
+        stress = safe(client.get_stress_data, d)
+        avg = (stress or {}).get("avgStressLevel")
+        if avg and avg > 0:
+            stress_l.append(avg)
+
+    def media(lst):
+        return round(sum(lst) / len(lst), 1) if lst else None
+
+    recuperacao = {
+        "hrv_medio": media(hrv_l),
+        "sono_medio_h": media(sono_l),
+        "stress_medio": media(stress_l),
+    }
+
+    # CONDICIONAMENTO (só dia mais recente)
+    hoje_str = hoje.isoformat()
+    fitness = {}
+
+    vo2 = safe(client.get_max_metrics, hoje_str)
+    if vo2 and isinstance(vo2, list) and vo2:
+        gen = vo2[0].get("generic", {})
+        fitness["vo2max_corrida"] = gen.get("vo2MaxValue")
+        cyc = vo2[0].get("cycling") or {}
+        fitness["vo2max_bike"] = cyc.get("vo2MaxValue")
+
+    status = safe(client.get_training_status, hoje_str)
+    if status and isinstance(status, dict):
+        latest = status.get("mostRecentTrainingStatus", {}).get(
+            "latestTrainingStatusData", {}
+        )
+        for dev in latest.values():
+            fitness["training_status"] = dev.get("trainingStatus")
+            fitness["carga_aguda"] = dev.get("acuteTrainingLoadDTO", {}).get("acwrPercent")
+            break
+
+    readiness = safe(client.get_training_readiness, hoje_str)
+    if readiness and isinstance(readiness, list) and readiness:
+        fitness["readiness_score"] = readiness[0].get("score")
+        fitness["readiness_feedback"] = readiness[0].get("feedbackShort")
+
+    return {
+        "periodo": f"{inicio.isoformat()} a {hoje.isoformat()}",
+        "dias": dias,
+        "totais": totais,
+        "treinos": treinos,
+        "recuperacao": recuperacao,
+        "condicionamento": fitness,
+    }
+
+
+async def relatorio_command(update, context):
+    uid = update.effective_user.id
+    dias = 7
+    if context.args:
+        try:
+            dias = int(context.args[0])
+        except ValueError:
+            pass
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"📊 Gerando relatório completo ({dias} dias)... pode levar um pouco."
+    )
+
+    try:
+        d = coletar_relatorio(dias)
+    except Exception as e:
+        print("Erro relatorio:", e)
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "⚠️ Falha ao coletar dados do Garmin."
+        )
+        return
+
+    prompt = f"""
+Você é coach de endurance e cientista de dados de performance.
+Analise meus dados do período {d['periodo']}.
+
+DADOS COMPLETOS:
+{json.dumps(d, ensure_ascii=False, default=str)}
+
+Estruture a resposta assim:
+
+📊 NÚMEROS DA SEMANA
+— volume por modalidade com totais
+
+🔗 CORRELAÇÕES
+— relação entre HRV/sono/stress e qualidade dos treinos
+— padrões que se repetem
+
+🧠 INTERPRETAÇÃO
+— o que os dados dizem sobre meu condicionamento atual
+— training status e readiness em linguagem simples
+
+⚠️ PONTO DE ATENÇÃO
+— maior risco ou oportunidade identificada
+
+🎯 RECOMENDAÇÃO
+— ajuste prático para a próxima semana
+"""
+
+    resposta = chamar_gpt_sync(
+        [
+            {"role": "system", "content": ESTILO_SOPHOS},
+            {"role": "user", "content": prompt}
+        ],
+        model=MODEL_MAIN,
+        max_tokens=1500
+    )
+
+    context.user_data["ultima_resposta"] = resposta
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        limitar_texto("📊 Relatório de Performance:\n\n" + resposta),
+        reply_markup=marcadores_feedback("relatorio")
+    )
+
+
+
 
 # =============================================================================
 # COMANDOS
@@ -759,6 +947,8 @@ async def comandos(update, context):
         "/exportar — backup Excel/TXT\n"
         "/processar_arquivo <instrução> — processar último arquivo pendente\n"
         "/comandos — mostrar este menu"
+        "/relatorio <dias> — análise completa de treino\n"
+        
     )
 
     await context.bot.send_message(update.effective_chat.id, msg)
@@ -1359,6 +1549,7 @@ def main():
     app.add_handler(CommandHandler("exportar", exportar))
     app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
     app.add_handler(CommandHandler("garmin", garmin_command))
+    app.add_handler(CommandHandler("relatorio", relatorio_command))
 
 
     app.add_handler(CallbackQueryHandler(feedback_handler))
