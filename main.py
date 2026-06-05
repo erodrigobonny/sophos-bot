@@ -946,8 +946,9 @@ async def comandos(update, context):
         "/estatisticas — feedback das respostas\n"
         "/exportar — backup Excel/TXT\n"
         "/processar_arquivo <instrução> — processar último arquivo pendente\n"
-        "/comandos — mostrar este menu"
         "/relatorio <dias> — análise completa de treino\n"
+        "/comandos — mostrar este menu"
+        
         
     )
 
