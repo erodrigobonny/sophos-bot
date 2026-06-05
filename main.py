@@ -620,7 +620,7 @@ def conectar_garmin():
             with open(GARMIN_TOKENS, "w") as f:
                 f.write(tokens_fb["data"])
             client = Garmin()
-            client.login(GARMIN_TOKENS)
+            client.login(tokenstore=GARMIN_TOKENS)
             print("✅ Garmin conectado via token.")
             return client
     except Exception:
@@ -628,7 +628,14 @@ def conectar_garmin():
 
     client = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
     client.login()
-    client.garth.dump(GARMIN_TOKENS)
+
+    try:
+        client.garth.dump(GARMIN_TOKENS)
+    except AttributeError:
+        import pickle
+        with open (GARMIN_TOKENS, "wb") as f:
+            pickle.dump(client.session, f)
+            
     salvar_tokens_firebase(GARMIN_TOKENS)
     return client
 
