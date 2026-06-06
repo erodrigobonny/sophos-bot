@@ -720,7 +720,7 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro para não consumir o limite de caracteres do telegram, ou seja, ajuste o relatório para no máximo 3750 caracteres, incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
+Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro para não consumir o limite de caracteres do telegram, ou seja, ajuste o relatório para no máximo 4000 caracteres, incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
 Analise meus dados do período {d['periodo']}.
 
 DADOS COMPLETOS:
