@@ -7,6 +7,7 @@ import sys
 import tempfile
 import traceback
 import unicodedata
+import requests
 from datetime import datetime, timedelta, timezone
 from garminconnect import Garmin
 
@@ -61,8 +62,8 @@ HISTORY_LIMIT = 6
 SUMMARY_TRIGGER = 20
 SUMMARY_KEY = "resumo_anterior"
 
-MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN", "gpt-5")
-MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST", "gpt-5-mini")
+MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN")
+MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST")
 MODEL_EMBED = "text-embedding-3-small"
 
 MAX_DOC_CHARS = 6000
@@ -116,9 +117,8 @@ Regras:
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 BOT_URL = os.environ.get("BOT_URL")
-GARMIN_EMAIL = os.environ.get("GARMIN_EMAIL")
-GARMIN_PASSWORD = os.environ.get("GARMIN_PASSWORD")
-GARMIN_TOKENS = os.environ.get("GARMIN_TOKENS", "/tmp/garmin_tokens")
+INTERVALS_API_KEY = os.environ.get("INTERVALS_API_KEY")
+INTERVALS_ATHLETE_ID = os.environ.get("INTERVALS_ATHLETE_ID")
 FIREBASE_URL = os.environ.get(
     "FIREBASE_URL",
     "https://sophos-ddbed-default-rtdb.firebaseio.com"
@@ -596,262 +596,102 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
             "temas": cont_tema,
             "humor_predominante": humor_predominante
         })
+
 # =============================================================================
-# GARMIN
+# INTERVALS.ICU
 # =============================================================================
 
-def salvar_tokens_firebase(tokens_path):
-    try:
-        with open(tokens_path, "r") as f:
-            tokens = f.read()
-        ref.child("config").child("garmin_tokens").set({
-            "data": tokens,
-            "atualizado": agora_iso()
-        })
-        print("✅ Tokens Garmin salvos no Firebase.")
-    except Exception as e:
-        print("Erro ao salvar tokens:", e)
-
-
-def conectar_garmin():
-    try:
-        tokens_fb = ref.child("config").child("garmin_tokens").get()
-        if tokens_fb and tokens_fb.get("data"):
-            with open(GARMIN_TOKENS, "w") as f:
-                f.write(tokens_fb["data"])
-            client = Garmin()
-            client.login(tokenstore=GARMIN_TOKENS)
-            print("✅ Garmin conectado via token.")
-            return client
-    except Exception:
-        print("⚠️ Token expirado. Fazendo login completo...")
-
-    client = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-    client.login()
-
-    try:
-        client.garth.dump(GARMIN_TOKENS)
-    except AttributeError:
-        import pickle
-        with open (GARMIN_TOKENS, "wb") as f:
-            pickle.dump(client.session, f)
-            
-    salvar_tokens_firebase(GARMIN_TOKENS)
-    return client
-
-
-def coletar_dados_garmin(dias=7):
-    client = conectar_garmin()
+def coletar_intervals(dias=7):
     hoje = datetime.now().date()
     inicio = hoje - timedelta(days=dias)
+    auth = ("API_KEY", INTERVALS_API_KEY)
+    base = f"https://intervals.icu/api/v1/athlete/{INTERVALS_ATHLETE_ID}"
 
-    atividades = client.get_activities_by_date(
-        inicio.isoformat(),
-        hoje.isoformat()
-    )
-
-    resumo_ativ = []
-    for a in atividades:
-        resumo_ativ.append({
-            "tipo": a.get("activityType", {}).get("typeKey"),
-            "nome": a.get("activityName"),
-            "data": a.get("startTimeLocal", "")[:10],
-            "distancia_km": round((a.get("distance") or 0) / 1000, 2),
-            "duracao_min": round((a.get("duration") or 0) / 60, 1),
-            "fc_media": a.get("averageHR"),
-            "fc_max": a.get("maxHR"),
-            "calorias": a.get("calories"),
-        })
-
-    def safe(fn, *args):
-        try:
-            return fn(*args)
-        except Exception:
-            return None
-
-    return {
-        "periodo": f"{inicio.isoformat()} a {hoje.isoformat()}",
-        "atividades": resumo_ativ,
-        "hrv": safe(client.get_hrv_data, hoje.isoformat()),
-        "sono": safe(client.get_sleep_data, hoje.isoformat()),
-        "stress": safe(client.get_stress_data, hoje.isoformat()),
-        "body_battery": safe(
-            client.get_body_battery,
-            inicio.isoformat(),
-            hoje.isoformat()
-        ),
-    }
-
-
-async def garmin_command(update, context):
-    uid = update.effective_user.id
-    dias = 7
-    if context.args:
-        try:
-            dias = int(context.args[0])
-        except ValueError:
-            pass
-
-    await context.bot.send_message(
-        update.effective_chat.id,
-        f"⌚ Puxando seus dados Garmin ({dias} dias)..."
-    )
-
-    try:
-        dados = coletar_dados_garmin(dias)
-    except Exception as e:
-        print("Erro Garmin:", e)
-        await context.bot.send_message(
-            update.effective_chat.id,
-            "⚠️ Falha ao conectar no Garmin. Verifique as variáveis de ambiente."
-        )
-        return
-
-    prompt = f"""
-Analise meus dados de treino como um coach de endurance experiente.
-
-DADOS GARMIN ({dados['periodo']}):
-{json.dumps(dados, ensure_ascii=False, default=str)}
-
-Entregue:
-1. Resumo de carga e recuperação
-2. Correlação HRV/sono/stress com os treinos
-3. Principal ponto de atenção
-4. Recomendação para a próxima semana
-"""
-
-    resposta = chamar_gpt_sync(
-        [
-            {"role": "system", "content": ESTILO_SOPHOS},
-            {"role": "user", "content": prompt}
-        ],
-        model=MODEL_MAIN,
-        max_tokens=1200
-    )
-
-    context.user_data["ultima_resposta"] = resposta
-
-    await context.bot.send_message(
-        update.effective_chat.id,
-        limitar_texto("⌚ Análise Garmin:\n\n" + resposta),
-        reply_markup=marcadores_feedback("garmin")
-    )
-
-def coletar_relatorio(dias=7):
-    client = conectar_garmin()
-    hoje = datetime.now().date()
-    inicio = hoje - timedelta(days=dias)
-
-    def safe(fn, *args):
-        try:
-            return fn(*args)
-        except Exception:
-            return None
-
-    # TREINOS (1 chamada para todo o período)
-    atividades = client.get_activities_by_date(
-        inicio.isoformat(), hoje.isoformat()
-    ) or []
+    # === ATIVIDADES ===
+    ativ = requests.get(
+        f"{base}/activities",
+        params={"oldest": inicio.isoformat(), "newest": hoje.isoformat()},
+        auth=auth, timeout=30
+    ).json()
 
     treinos = []
-    for a in atividades:
-        vel = a.get("averageSpeed")
+    for a in ativ:
+        vel = a.get("average_speed")
         treinos.append({
-            "tipo": a.get("activityType", {}).get("typeKey"),
-            "data": a.get("startTimeLocal", "")[:10],
+            "tipo": a.get("type"),
+            "nome": a.get("name"),
+            "data": (a.get("start_date_local") or "")[:10],
             "dist_km": round((a.get("distance") or 0) / 1000, 2),
-            "dur_min": round((a.get("duration") or 0) / 60, 1),
-            "fc_med": a.get("averageHR"),
-            "fc_max": a.get("maxHR"),
-            "pace": round(1000 / vel / 60, 2) if vel else None,
-            "elev_m": round(a.get("elevationGain") or 0),
-            "cadencia": a.get("averageRunningCadenceInStepsPerMinute")
-                or a.get("averageBikingCadenceInRevPerMinute"),
-            "potencia_w": a.get("avgPower"),
-            "te_aero": a.get("aerobicTrainingEffect"),
-            "te_anaero": a.get("anaerobicTrainingEffect"),
-            "tss": a.get("trainingStressScore"),
+            "dur_min": round((a.get("moving_time") or 0) / 60, 1),
+            "fc_med": a.get("average_heartrate"),
+            "fc_max": a.get("max_heartrate"),
+            "pace_min_km": round(1000 / vel / 60, 2) if vel else None,
+            "potencia_w": a.get("icu_average_watts"),
+            "elev_m": round(a.get("total_elevation_gain") or 0),
+            "cadencia": a.get("average_cadence"),
+            "carga_treino": a.get("icu_training_load"),
+            "intensidade": a.get("icu_intensity"),
+            "trimp": a.get("trimp"),
             "cal": a.get("calories"),
         })
 
-    def soma_tipo(chave_tipo, divisor=1000):
+    def soma_tipo(chave):
         return round(sum(
-            (a.get("distance") or 0) for a in atividades
-            if chave_tipo in a.get("activityType", {}).get("typeKey", "").lower()
-        ) / divisor, 1)
+            (a.get("distance") or 0) for a in ativ
+            if chave in (a.get("type") or "").lower()
+        ))
 
     totais = {
-        "natacao_m": round(soma_tipo("swim", 1)),
-        "bike_km": soma_tipo("cycling"),
-        "corrida_km": soma_tipo("running"),
-        "calorias": round(sum(a.get("calories") or 0 for a in atividades)),
-        "total_sessoes": len(atividades),
+        "natacao_m": soma_tipo("swim"),
+        "bike_km": round(soma_tipo("ride") / 1000, 1),
+        "corrida_km": round(soma_tipo("run") / 1000, 1),
+        "calorias": round(sum(a.get("calories") or 0 for a in ativ)),
+        "carga_total": round(sum(a.get("icu_training_load") or 0 for a in ativ)),
+        "total_sessoes": len(ativ),
     }
 
-    # RECUPERAÇÃO (máx. 7 dias)
-    dias_rec = min(dias, 7)
-    hrv_l, sono_l, stress_l = [], [], []
+    # === WELLNESS (fitness, fadiga, forma, HRV, sono, VO2) ===
+    wel = requests.get(
+        f"{base}/wellness",
+        params={"oldest": inicio.isoformat(), "newest": hoje.isoformat()},
+        auth=auth, timeout=30
+    ).json()
 
-    for i in range(dias_rec):
-        d = (hoje - timedelta(days=i)).isoformat()
+    if isinstance(wel, dict):
+        wel = list(wel.values())
 
-        hrv = safe(client.get_hrv_data, d)
-        v = (hrv or {}).get("hrvSummary", {}).get("lastNight")
-        if v:
-            hrv_l.append(v)
+    def media(campo, transform=lambda x: x):
+        vals = [transform(w[campo]) for w in wel if w.get(campo)]
+        return round(sum(vals) / len(vals), 1) if vals else None
 
-        sono = safe(client.get_sleep_data, d)
-        seg = (sono or {}).get("dailySleepDTO", {}).get("sleepTimeSeconds")
-        if seg:
-            sono_l.append(seg / 3600)
+    # Condicionamento — pega o registro mais recente que tiver dados
+    ultimo = next((w for w in reversed(wel) if w.get("ctl")), {})
+    primeiro = next((w for w in wel if w.get("ctl")), {})
 
-        stress = safe(client.get_stress_data, d)
-        avg = (stress or {}).get("avgStressLevel")
-        if avg and avg > 0:
-            stress_l.append(avg)
-
-    def media(lst):
-        return round(sum(lst) / len(lst), 1) if lst else None
+    condicionamento = {
+        "fitness_ctl": round(ultimo.get("ctl") or 0, 1),
+        "fadiga_atl": round(ultimo.get("atl") or 0, 1),
+        "forma_tsb": round((ultimo.get("ctl") or 0) - (ultimo.get("atl") or 0), 1),
+        "vo2max": ultimo.get("vo2max"),
+        "tendencia_fitness": round((ultimo.get("ctl") or 0) - (primeiro.get("ctl") or 0), 1),
+    }
 
     recuperacao = {
-        "hrv_medio": media(hrv_l),
-        "sono_medio_h": media(sono_l),
-        "stress_medio": media(stress_l),
+        "hrv_medio": media("hrv"),
+        "rhr_medio": media("restingHR"),
+        "sono_medio_h": media("sleepSecs", lambda s: s / 3600),
+        "sono_score_medio": media("sleepScore"),
+        "readiness_medio": media("readiness"),
+        "peso_medio": media("weight"),
     }
-
-    # CONDICIONAMENTO (só dia mais recente)
-    hoje_str = hoje.isoformat()
-    fitness = {}
-
-    vo2 = safe(client.get_max_metrics, hoje_str)
-    if vo2 and isinstance(vo2, list) and vo2:
-        gen = vo2[0].get("generic", {})
-        fitness["vo2max_corrida"] = gen.get("vo2MaxValue")
-        cyc = vo2[0].get("cycling") or {}
-        fitness["vo2max_bike"] = cyc.get("vo2MaxValue")
-
-    status = safe(client.get_training_status, hoje_str)
-    if status and isinstance(status, dict):
-        latest = status.get("mostRecentTrainingStatus", {}).get(
-            "latestTrainingStatusData", {}
-        )
-        for dev in latest.values():
-            fitness["training_status"] = dev.get("trainingStatus")
-            fitness["carga_aguda"] = dev.get("acuteTrainingLoadDTO", {}).get("acwrPercent")
-            break
-
-    readiness = safe(client.get_training_readiness, hoje_str)
-    if readiness and isinstance(readiness, list) and readiness:
-        fitness["readiness_score"] = readiness[0].get("score")
-        fitness["readiness_feedback"] = readiness[0].get("feedbackShort")
 
     return {
         "periodo": f"{inicio.isoformat()} a {hoje.isoformat()}",
         "dias": dias,
         "totais": totais,
         "treinos": treinos,
+        "condicionamento": condicionamento,
         "recuperacao": recuperacao,
-        "condicionamento": fitness,
     }
 
 
@@ -866,16 +706,16 @@ async def relatorio_command(update, context):
 
     await context.bot.send_message(
         update.effective_chat.id,
-        f"📊 Gerando relatório completo ({dias} dias)... pode levar um pouco."
+        f"📊 Gerando relatório completo ({dias} dias)..."
     )
 
     try:
-        d = coletar_relatorio(dias)
+        d = coletar_intervals(dias)
     except Exception as e:
         print("Erro relatorio:", e)
         await context.bot.send_message(
             update.effective_chat.id,
-            "⚠️ Falha ao coletar dados do Garmin."
+            "⚠️ Falha ao coletar dados do Intervals.icu. Verifique API Key e Athlete ID."
         )
         return
 
@@ -886,21 +726,27 @@ Analise meus dados do período {d['periodo']}.
 DADOS COMPLETOS:
 {json.dumps(d, ensure_ascii=False, default=str)}
 
+Contexto técnico das métricas:
+- fitness_ctl = condicionamento crônico (quanto maior, mais fit)
+- fadiga_atl = fadiga aguda recente
+- forma_tsb = forma (CTL menos ATL; positivo = descansado, negativo = sobrecarregado)
+- carga_treino = training load por sessão
+
 Estruture a resposta assim:
 
 📊 NÚMEROS DA SEMANA
-— volume por modalidade com totais
+— volume por modalidade, carga total, sessões
 
 🔗 CORRELAÇÕES
-— relação entre HRV/sono/stress e qualidade dos treinos
+— relação entre HRV/sono/readiness e qualidade dos treinos
 — padrões que se repetem
 
-🧠 INTERPRETAÇÃO
-— o que os dados dizem sobre meu condicionamento atual
-— training status e readiness em linguagem simples
+🧠 CONDICIONAMENTO
+— leitura de fitness (CTL), fadiga (ATL) e forma (TSB) em linguagem simples
+— tendência: estou ganhando ou perdendo condicionamento?
 
 ⚠️ PONTO DE ATENÇÃO
-— maior risco ou oportunidade identificada
+— maior risco (overtraining/subtreino) ou oportunidade
 
 🎯 RECOMENDAÇÃO
 — ajuste prático para a próxima semana
@@ -922,7 +768,6 @@ Estruture a resposta assim:
         limitar_texto("📊 Relatório de Performance:\n\n" + resposta),
         reply_markup=marcadores_feedback("relatorio")
     )
-
 
 
 
@@ -1556,7 +1401,6 @@ def main():
     app.add_handler(CommandHandler("estatisticas", estatisticas))
     app.add_handler(CommandHandler("exportar", exportar))
     app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
-    app.add_handler(CommandHandler("garmin", garmin_command))
     app.add_handler(CommandHandler("relatorio", relatorio_command))
 
 
