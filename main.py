@@ -45,7 +45,6 @@ try:
 except Exception:
     docx = None
 
-
 # =============================================================================
 # CONFIGURAÇÕES
 # =============================================================================
@@ -93,7 +92,6 @@ IMPORTANTE:
 Não utilize: ** -- ## Markdown, utilize apenas texto puro.
 """
 
-
 # =============================================================================
 # INICIALIZAÇÃO
 # =============================================================================
@@ -119,7 +117,7 @@ if not BOT_URL:
 if "FIREBASE_CRED_JSON" not in os.environ:
     raise RuntimeError("FIREBASE_CRED_JSON não configurado.")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY, timeout=60.0, max_retries=2)
 
 cred_dict = json.loads(os.environ["FIREBASE_CRED_JSON"])
 cred = credentials.Certificate(cred_dict)
@@ -151,7 +149,6 @@ if PINECONE_API_KEY and PINECONE_ENVIRONMENT:
 
     vec_index = pc.Index(index_name)
 
-
 # =============================================================================
 # UTILITÁRIOS
 # =============================================================================
@@ -159,10 +156,8 @@ if PINECONE_API_KEY and PINECONE_ENVIRONMENT:
 def agora_iso():
     return datetime.now().isoformat()
 
-
 def remover_acentos(texto: str) -> str:
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
-
 
 def dividir_texto(texto: str, limite: int = MAX_TELEGRAM_CHARS):
     partes = []
@@ -181,7 +176,6 @@ def dividir_texto(texto: str, limite: int = MAX_TELEGRAM_CHARS):
         partes.append(texto)
 
     return partes
-
 
 async def enviar_texto_longo(context, chat_id, texto, reply_markup=None):
     partes = dividir_texto(texto)
@@ -215,9 +209,12 @@ def chamar_gpt_sync(messages, model=MODEL_MAIN, max_tokens=None, user_id=None):
                 "total_tokens": resp.usage.total_tokens,
                 "data": agora_iso(),
             }
-            ref.child(str(user_id)).child("uso_tokens").push(uso)
+            push_ref = ref.child(str(user_id)).child("uso_tokens").push(uso)
+            # Limpeza esporádica: ~1 a cada 50 chamadas
+            if push_ref.key and push_ref.key[-1] in ("0", "5"):
+                limpar_uso_antigo(user_id)
     except Exception as e:
-        print("Erro ao logar uso:", e)
+        print("Erro ao logar uso:", e)           
 
     return resp.choices[0].message.content or ""
 
@@ -228,7 +225,6 @@ def gerar_embedding(texto: str):
     )
     return resp.data[0].embedding
 
-
 def deve_extrair_memoria(texto: str) -> bool:
     t = texto.lower().strip()
 
@@ -237,7 +233,6 @@ def deve_extrair_memoria(texto: str) -> bool:
 
     return any(g in t for g in GATILHOS_MEMORIA)
 
-
 def marcadores_feedback(tipo):
     return InlineKeyboardMarkup([
         [
@@ -245,7 +240,6 @@ def marcadores_feedback(tipo):
             InlineKeyboardButton("👎", callback_data=f"{tipo}:dislike"),
         ]
     ])
-
 
 # =============================================================================
 # FIREBASE / MEMÓRIA
@@ -261,7 +255,6 @@ def inicializar_usuario(user_id):
         if not user_ref.child(sub).get():
             user_ref.child(sub).set({})
 
-
 def salvar_contexto(user_id, texto):
     contexto = ref.child(str(user_id)).child("contexto").get() or {}
     ultimos = [v.get("texto", "") for v in contexto.values() if isinstance(v, dict)]
@@ -273,7 +266,6 @@ def salvar_contexto(user_id, texto):
         "texto": texto,
         "data": agora_iso()
     })
-
 
 def recuperar_contexto(user_id, limite=HISTORY_LIMIT):
     partes = []
@@ -291,10 +283,8 @@ def recuperar_contexto(user_id, limite=HISTORY_LIMIT):
 
     return "\n".join(partes)
 
-
 def salvar_memoria_relativa(user_id, chave, valor):
     ref.child(str(user_id)).child("memoria").child(chave).set(valor)
-
 
 def registrar_feedback(user_id, tipo_resposta, feedback, texto_resposta):
     ref.child(str(user_id)).child("feedback_respostas").push({
@@ -303,7 +293,6 @@ def registrar_feedback(user_id, tipo_resposta, feedback, texto_resposta):
         "resposta": texto_resposta[:500],
         "data": agora_iso()
     })
-
 
 def recuperar_feedback_counts(user_id):
     fb = ref.child(str(user_id)).child("feedback_respostas").get() or {}
@@ -320,7 +309,6 @@ def recuperar_feedback_counts(user_id):
             dislikes += 1
 
     return likes, dislikes
-
 
 def extrair_memoria_com_gpt(texto: str) -> dict:
     prompt = f"""
@@ -346,7 +334,6 @@ Texto:
         return json.loads(content)
     except Exception:
         return {}
-
 
 async def resumir_contexto_antigo(user_id):
     caminho = ref.child(str(user_id)).child("contexto")
@@ -385,7 +372,6 @@ async def resumir_contexto_antigo(user_id):
     except Exception as e:
         print("Erro ao resumir contexto:", e)
 
-
 async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5):
     if not vec_index:
         return []
@@ -415,7 +401,6 @@ async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5):
     except Exception as e:
         print("Erro busca semântica:", e)
         return []
-
 
 def salvar_memoria_e_indexar(user_id, memoria_nova: dict):
     if not memoria_nova:
@@ -456,6 +441,25 @@ def salvar_memoria_e_indexar(user_id, memoria_nova: dict):
             except Exception as e:
                 print("Erro ao indexar memória:", e)
 
+def limpar_uso_antigo(user_id, max_registros=5000):
+    """Mantém só os registros mais recentes de uso_tokens."""
+    try:
+        uso_ref = ref.child(str(user_id)).child("uso_tokens")
+        todos = uso_ref.get() or {}
+
+        if len(todos) <= max_registros:
+            return
+
+        # Ordena por chave (push do Firebase é cronológico) e remove os mais antigos
+        chaves_ordenadas = sorted(todos.keys())
+        excesso = len(todos) - max_registros
+
+        for chave in chaves_ordenadas[:excesso]:
+            uso_ref.child(chave).delete()
+
+        print(f"🧹 Limpeza uso_tokens: removidos {excesso} registros antigos.")
+    except Exception as e:
+        print("Erro ao limpar uso_tokens:", e)
 
 # =============================================================================
 # INTERVALS.ICU - RELATÓRIO
@@ -472,7 +476,6 @@ def normalizar_data_br(data_str):
             pass
 
     raise ValueError(f"Data inválida: {data_str}")
-
 
 def coletar_intervals(dias=7, inicio=None, fim=None):
     hoje = datetime.now().date()
@@ -633,7 +636,6 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "recuperacao": recuperacao,
     }
 
-
 async def relatorio_command(update, context):
     uid = update.effective_user.id
 
@@ -761,7 +763,6 @@ Cada insight deve aparecer apenas uma vez.
         reply_markup=marcadores_feedback("relatorio")
     )
 
-
 # =============================================================================
 # COMANDOS
 # =============================================================================
@@ -861,7 +862,6 @@ async def comandos(update, context):
 
     await context.bot.send_message(update.effective_chat.id, msg)
 
-
 # =============================================================================
 # FEEDBACK
 # =============================================================================
@@ -887,7 +887,6 @@ async def feedback_handler(update, context):
         pass
 
     await q.message.reply_text("✅ Feedback registrado.")
-
 
 # =============================================================================
 # VOZ
@@ -923,7 +922,6 @@ async def voz(update, context):
         except Exception:
             pass
 
-
 # =============================================================================
 # PROCESSAMENTO PRINCIPAL
 # =============================================================================
@@ -949,7 +947,6 @@ def escolher_modelo(texto: str) -> str:
         return MODEL_FAST
 
     return MODEL_MAIN
-
 
 def deve_buscar_memoria(texto: str) -> bool:
     t = texto.lower().strip()
@@ -1029,7 +1026,6 @@ Mensagem atual do usuário:
         r,
         reply_markup=marcadores_feedback("geral")
     )
-
 
 async def mensagem(update, context):
     uid = update.effective_user.id
@@ -1129,7 +1125,6 @@ def extrair_texto_arquivo(temp_path, file_name=""):
    
     return extracted_text.strip()
 
-
 def preparar_texto_documento(texto):
     if not texto:
         return ""
@@ -1144,7 +1139,6 @@ def preparar_texto_documento(texto):
         + "\n\n[... conteúdo intermediário cortado para economizar tokens ...]\n\n"
         + texto[-metade:]
     )
-
 
 async def analisar_documento(update, context, temp_path, file_name, instrucao):
     nome = (file_name or temp_path or "").lower()
@@ -1269,7 +1263,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-
 async def processar_ultimo_arquivo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     temp_path = context.user_data.get("ultimo_arquivo_temp")
     file_name = context.user_data.get("ultimo_arquivo_nome", "arquivo")
@@ -1306,7 +1299,6 @@ async def processar_ultimo_arquivo_cmd(update: Update, context: ContextTypes.DEF
         context.user_data.pop("ultimo_arquivo_temp", None)
         context.user_data.pop("ultimo_arquivo_nome", None)
 
-
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -1331,7 +1323,6 @@ def main():
         url_path=TOKEN,
         webhook_url=WEBHOOK_URL,
     )
-
 
 if __name__ == "__main__":
     main()
