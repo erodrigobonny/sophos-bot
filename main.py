@@ -784,42 +784,53 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "recuperacao": recuperacao,
     }
 
-dias = 7
-inicio = None
-fim = None
+async def relatorio_command(update, context):
+    uid = update.effective_user.id
 
-args = context.args
+    dias = 7
+    inicio = None
+    fim = None
 
-if args:
-    texto_args = " ".join(args).replace(" até ", " ").replace(" a ", " ").replace("-", " ")
-    partes = [p.strip() for p in texto_args.split() if p.strip()]
+    args = context.args
 
-    datas = []
+    if args:
+        texto_args = (
+            " ".join(args)
+            .replace(" até ", " ")
+            .replace(" a ", " ")
+            .replace("-", " ")
+        )
 
-    for p in partes:
-        try:
-            normalizar_data_br(p)
-            datas.append(p)
-        except ValueError:
-            pass
+        partes = [p.strip() for p in texto_args.split() if p.strip()]
+        datas = []
 
-    if len(datas) >= 2:
-        inicio = datas[0]
-        fim = datas[1]
-    else:
-        try:
-            dias = int(args[0])
-        except ValueError:
-            await context.bot.send_message(
-                update.effective_chat.id,
-                "Formato inválido. Use:\n/relatorio 7\nou\n/relatorio 25/05/26 31/05/26"
-            )
-            return
+        for p in partes:
+            try:
+                normalizar_data_br(p)
+                datas.append(p)
+            except ValueError:
+                pass
 
-    await context.bot.send_message(
-        update.effective_chat.id,
-        f"📊 Gerando relatório de {inicio} a {fim}..." if inicio and fim else f"📊 Gerando relatório completo ({dias} dias)..."
+        if len(datas) >= 2:
+            inicio = datas[0]
+            fim = datas[1]
+        else:
+            try:
+                dias = int(args[0])
+            except ValueError:
+                await context.bot.send_message(
+                    update.effective_chat.id,
+                    "Formato inválido. Use:\n/relatorio 7\nou\n/relatorio 25/05/26 31/05/26"
+                )
+                return
+
+    msg_status = (
+        f"📊 Gerando relatório de {inicio} a {fim}..."
+        if inicio and fim
+        else f"📊 Gerando relatório completo ({dias} dias)..."
     )
+
+    await context.bot.send_message(update.effective_chat.id, msg_status)
 
     try:
         d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
