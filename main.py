@@ -54,8 +54,8 @@ HISTORY_LIMIT = 6
 SUMMARY_TRIGGER = 20
 SUMMARY_KEY = "resumo_anterior"
 
-MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN", "gpt-5")
-MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST", "gpt-5-mini")
+MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN")
+MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST")
 MODEL_EMBED = "text-embedding-3-small"
 
 MAX_DOC_CHARS = 9000
