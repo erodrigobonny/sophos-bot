@@ -9,7 +9,6 @@ import traceback
 import unicodedata
 import requests
 from datetime import datetime, timedelta, timezone
-from garminconnect import Garmin
 
 import pandas as pd
 import aiofiles
