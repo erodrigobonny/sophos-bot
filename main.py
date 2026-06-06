@@ -8,6 +8,7 @@ import tempfile
 import traceback
 import unicodedata
 import requests
+import base64
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -43,13 +44,6 @@ try:
     import docx
 except Exception:
     docx = None
-
-try:
-    import pytesseract
-    from PIL import Image
-except Exception:
-    pytesseract = None
-    Image = None
 
 
 # =============================================================================
@@ -917,6 +911,48 @@ async def mensagem(update, context):
 
     await processar_texto(uid, txt, update, context)
 
+def analisar_imagem_com_ia(temp_path, instrucao="Analise esta imagem."):
+    with open(temp_path, "rb") as img:
+        base64_image = base64.b64encode(img.read()).decode("utf-8")
+
+    prompt = f"""
+Instrução do usuário:
+{instrucao}
+
+Analise esta imagem de forma prática.
+
+Faça:
+1. Extração de textos visíveis
+2. Identificação de números, tabelas ou dados
+3. Resumo do conteúdo
+4. Pontos importantes
+5. Riscos, erros ou inconsistências
+6. Ações recomendadas, se aplicável
+
+Se for print de treino, dashboard, planilha, contrato, conversa ou documento, adapte a análise ao contexto.
+"""
+
+    resp = client.chat.completions.create(
+        model=MODEL_MAIN,
+        messages=[
+            {"role": "system", "content": ESTILO_SOPHOS},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ],
+        max_completion_tokens=1200
+    )
+
+    return resp.choices[0].message.content or ""
 
 # =============================================================================
 # ARQUIVOS
@@ -985,6 +1021,31 @@ def preparar_texto_documento(texto):
 
 
 async def analisar_documento(update, context, temp_path, file_name, instrucao):
+    nome = (file_name or temp_path or "").lower()
+
+    # IMAGENS: usa IA visual, não OCR local
+    if nome.endswith((".png", ".jpg", ".jpeg", ".webp")):
+        try:
+            resposta = analisar_imagem_com_ia(temp_path, instrucao)
+        except Exception as e:
+            print("Erro análise imagem IA:", e)
+            await context.bot.send_message(
+                update.effective_chat.id,
+                "⚠️ Falha ao analisar a imagem com IA."
+            )
+            return
+
+        context.user_data["ultima_resposta"] = resposta
+
+        await enviar_texto_longo(
+            context,
+            update.effective_chat.id,
+            "🖼️ Análise da imagem:\n\n" + resposta,
+            reply_markup=marcadores_feedback("imagem")
+        )
+        return
+
+    # DOCUMENTOS: mantém extração tradicional
     extracted_text = extrair_texto_arquivo(temp_path, file_name=file_name)
 
     if not extracted_text:
@@ -993,7 +1054,7 @@ async def analisar_documento(update, context, temp_path, file_name, instrucao):
 
         await context.bot.send_message(
             update.effective_chat.id,
-            "Não consegui extrair texto automaticamente. Se for imagem escaneada/PDF escaneado, o OCR pode não estar disponível no Render. Use /processar_arquivo <instrução> para tentar novamente."
+            "Não consegui extrair texto automaticamente. Use /processar_arquivo <instrução> para tentar novamente."
         )
         return
 
@@ -1039,7 +1100,6 @@ Se for texto genérico, resuma e proponha próximos passos.
         "📄 Análise do arquivo:\n\n" + resposta,
         reply_markup=marcadores_feedback("documento")
     )
-
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
