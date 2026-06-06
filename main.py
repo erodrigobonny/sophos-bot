@@ -1,4 +1,4 @@
-# Sophos V15 Otimizada – main.py
+# Sophos V16 - Intervals – main.py
 
 import os
 import re
