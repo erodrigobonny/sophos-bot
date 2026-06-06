@@ -94,6 +94,9 @@ Regras:
 - Seja franco, mas útil.
 - Não puxe assuntos antigos sem necessidade.
 - Priorize ação prática, clareza e decisão.
+
+IMPORTANTE:
+Não utilize: ** -- ## Markdown, utilize apenas texto puro.
 """
 
 
