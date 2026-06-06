@@ -720,7 +720,7 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance. Não utilize: ** _ _ ## Markdown, utilize apenas texto puro para não consumir o limite de caracteres do telegram.
+Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro para não consumir o limite de caracteres do telegram.
 Analise meus dados do período {d['periodo']}.
 
 DADOS COMPLETOS:
