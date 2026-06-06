@@ -45,6 +45,8 @@ try:
 except Exception:
     docx = None
 
+from PIL import Image
+
 
 # =============================================================================
 # CONFIGURAÇÕES
