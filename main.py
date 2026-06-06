@@ -683,7 +683,7 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro para não consumir o limite de caracteres do telegram, ou seja, ajuste o relatório para no máximo 4000 caracteres, incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
+Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 4000 caracteres, incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
 Analise meus dados do período {d['periodo']}.
 
 DADOS COMPLETOS:
@@ -770,7 +770,7 @@ async def comandos(update, context):
         "📌 Comandos disponíveis:\n"
         "/start — iniciar\n"
         "/relatorio <dias> — relatório de performance\n"
-        "/relatorio 25/05/26 31/05/26 — relatório por período\n"
+        "/relatorio <xx/xx/xx xx/xx/xx> — relatório por período\n"
         "/processar_arquivo <instrução> — processar último arquivo pendente\n"
         "/comandos — mostrar menu"
     )
