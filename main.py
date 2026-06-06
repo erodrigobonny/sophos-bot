@@ -609,7 +609,8 @@ def coletar_intervals(dias=7):
     # === ATIVIDADES ===
     ativ = requests.get(
         f"{base}/activities",
-        params={"oldest": inicio.isoformat(), "newest": hoje.isoformat()},
+        params={"oldest": inicio.isoformat(), "newest": (hoje + timedelta(days=1)).isoformat()},
+                #"newest": hoje.isoformat()},
         auth=auth, timeout=30
     ).json()
 
@@ -719,7 +720,7 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance.
+Você é coach de endurance e cientista de dados de performance. Não utilize: ** _ _ ## Markdown, utilize apenas texto puro para não consumir o limite de caracteres do telegram.
 Analise meus dados do período {d['periodo']}.
 
 DADOS COMPLETOS:
