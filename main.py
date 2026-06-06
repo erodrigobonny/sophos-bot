@@ -600,27 +600,82 @@ async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
 # INTERVALS.ICU
 # =============================================================================
 
-def coletar_intervals(dias=7):
+def normalizar_data_br(data_str):
+    """
+    Aceita:
+    - 25/05/26
+    - 25/05/2026
+    - 2026-05-25
+    Retorna date.
+    """
+    data_str = data_str.strip()
+
+    formatos = ["%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d"]
+
+    for fmt in formatos:
+        try:
+            return datetime.strptime(data_str, fmt).date()
+        except ValueError:
+            pass
+
+    raise ValueError(f"Data inválida: {data_str}")
+
+
+def coletar_intervals(dias=7, inicio=None, fim=None):
     hoje = datetime.now().date()
-    inicio = hoje - timedelta(days=dias)
+
+    if inicio and fim:
+        inicio = normalizar_data_br(inicio) if isinstance(inicio, str) else inicio
+        fim = normalizar_data_br(fim) if isinstance(fim, str) else fim
+    else:
+        fim = hoje
+        inicio = hoje - timedelta(days=dias)
+
+    if fim < inicio:
+        raise ValueError("Data final menor que data inicial.")
+
     auth = ("API_KEY", INTERVALS_API_KEY)
     base = f"https://intervals.icu/api/v1/athlete/{INTERVALS_ATHLETE_ID}"
 
+    newest_api = fim + timedelta(days=1)
+
     # === ATIVIDADES ===
-    ativ = requests.get(
+    ativ_resp = requests.get(
         f"{base}/activities",
-        params={"oldest": inicio.isoformat(), "newest": (hoje + timedelta(days=1)).isoformat()},
-                #"newest": hoje.isoformat()},
-        auth=auth, timeout=30
-    ).json()
+        params={
+            "oldest": inicio.isoformat(),
+            "newest": newest_api.isoformat()
+        },
+        auth=auth,
+        timeout=30
+    )
+
+    ativ_resp.raise_for_status()
+    ativ = ativ_resp.json()
+
+    if isinstance(ativ, dict):
+        ativ = list(ativ.values())
 
     treinos = []
+
     for a in ativ:
+        data_local = (a.get("start_date_local") or "")[:10]
+
+        # Blindagem: garante que só entra treino dentro do período pedido
+        try:
+            data_treino = datetime.fromisoformat(data_local).date()
+            if data_treino < inicio or data_treino > fim:
+                continue
+        except Exception:
+            pass
+
         vel = a.get("average_speed")
+
         treinos.append({
             "tipo": a.get("type"),
             "nome": a.get("name"),
-            "data": (a.get("start_date_local") or "")[:10],
+            "data": data_local,
+            "data_hora": a.get("start_date_local"),
             "dist_km": round((a.get("distance") or 0) / 1000, 2),
             "dur_min": round((a.get("moving_time") or 0) / 60, 1),
             "fc_med": a.get("average_heartrate"),
@@ -637,36 +692,71 @@ def coletar_intervals(dias=7):
 
     def soma_tipo(chave):
         return round(sum(
-            (a.get("distance") or 0) for a in ativ
-            if chave in (a.get("type") or "").lower()
+            (t.get("dist_km") or 0) * 1000 for t in treinos
+            if chave in (t.get("tipo") or "").lower()
         ))
 
     totais = {
         "natacao_m": soma_tipo("swim"),
         "bike_km": round(soma_tipo("ride") / 1000, 1),
         "corrida_km": round(soma_tipo("run") / 1000, 1),
-        "calorias": round(sum(a.get("calories") or 0 for a in ativ)),
-        "carga_total": round(sum(a.get("icu_training_load") or 0 for a in ativ)),
-        "total_sessoes": len(ativ),
+        "calorias": round(sum(t.get("cal") or 0 for t in treinos)),
+        "carga_total": round(sum(t.get("carga_treino") or 0 for t in treinos)),
+        "total_sessoes": len(treinos),
     }
 
-    # === WELLNESS (fitness, fadiga, forma, HRV, sono, VO2) ===
-    wel = requests.get(
+    # === WELLNESS ===
+    wel_resp = requests.get(
         f"{base}/wellness",
-        params={"oldest": inicio.isoformat(), "newest": hoje.isoformat()},
-        auth=auth, timeout=30
-    ).json()
+        params={
+            "oldest": inicio.isoformat(),
+            "newest": newest_api.isoformat()
+        },
+        auth=auth,
+        timeout=30
+    )
+
+    wel_resp.raise_for_status()
+    wel = wel_resp.json()
 
     if isinstance(wel, dict):
         wel = list(wel.values())
 
+    # Blindagem wellness dentro do período
+    wel_filtrado = []
+
+    for w in wel:
+        data_w = w.get("id") or w.get("date") or w.get("day")
+
+        if not data_w:
+            wel_filtrado.append(w)
+            continue
+
+        try:
+            data_w_date = datetime.fromisoformat(str(data_w)[:10]).date()
+            if inicio <= data_w_date <= fim:
+                wel_filtrado.append(w)
+        except Exception:
+            wel_filtrado.append(w)
+
+    wel = wel_filtrado
+
     def media(campo, transform=lambda x: x):
-        vals = [transform(w[campo]) for w in wel if w.get(campo)]
+        vals = []
+
+        for w in wel:
+            valor = w.get(campo)
+
+            if valor is not None:
+                try:
+                    vals.append(transform(valor))
+                except Exception:
+                    pass
+
         return round(sum(vals) / len(vals), 1) if vals else None
 
-    # Condicionamento — pega o registro mais recente que tiver dados
-    ultimo = next((w for w in reversed(wel) if w.get("ctl")), {})
-    primeiro = next((w for w in wel if w.get("ctl")), {})
+    ultimo = next((w for w in reversed(wel) if w.get("ctl") is not None), {})
+    primeiro = next((w for w in wel if w.get("ctl") is not None), {})
 
     condicionamento = {
         "fitness_ctl": round(ultimo.get("ctl") or 0, 1),
@@ -686,31 +776,53 @@ def coletar_intervals(dias=7):
     }
 
     return {
-        "periodo": f"{inicio.isoformat()} a {hoje.isoformat()}",
-        "dias": dias,
+        "periodo": f"{inicio.isoformat()} a {fim.isoformat()}",
+        "dias": (fim - inicio).days + 1,
         "totais": totais,
         "treinos": treinos,
         "condicionamento": condicionamento,
         "recuperacao": recuperacao,
     }
 
+dias = 7
+inicio = None
+fim = None
 
-async def relatorio_command(update, context):
-    uid = update.effective_user.id
-    dias = 7
-    if context.args:
+args = context.args
+
+if args:
+    texto_args = " ".join(args).replace(" até ", " ").replace(" a ", " ").replace("-", " ")
+    partes = [p.strip() for p in texto_args.split() if p.strip()]
+
+    datas = []
+
+    for p in partes:
         try:
-            dias = int(context.args[0])
+            normalizar_data_br(p)
+            datas.append(p)
         except ValueError:
             pass
 
+    if len(datas) >= 2:
+        inicio = datas[0]
+        fim = datas[1]
+    else:
+        try:
+            dias = int(args[0])
+        except ValueError:
+            await context.bot.send_message(
+                update.effective_chat.id,
+                "Formato inválido. Use:\n/relatorio 7\nou\n/relatorio 25/05/26 31/05/26"
+            )
+            return
+
     await context.bot.send_message(
         update.effective_chat.id,
-        f"📊 Gerando relatório completo ({dias} dias)..."
+        f"📊 Gerando relatório de {inicio} a {fim}..." if inicio and fim else f"📊 Gerando relatório completo ({dias} dias)..."
     )
 
     try:
-        d = coletar_intervals(dias)
+        d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
     except Exception as e:
         print("Erro relatorio:", e)
         await context.bot.send_message(
