@@ -1,4 +1,4 @@
-# Sophos V16 - Intervals – main.py
+# Sophos V17 Enxuto – main.py
 
 import os
 import re
@@ -8,10 +8,9 @@ import tempfile
 import traceback
 import unicodedata
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pandas as pd
-import aiofiles
 
 from openai import OpenAI
 import firebase_admin
@@ -61,23 +60,12 @@ HISTORY_LIMIT = 6
 SUMMARY_TRIGGER = 20
 SUMMARY_KEY = "resumo_anterior"
 
-MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN")
-MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST")
+MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN", "gpt-5")
+MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST", "gpt-5-mini")
 MODEL_EMBED = "text-embedding-3-small"
 
-MAX_DOC_CHARS = 6000
-MAX_TELEGRAM_CHARS = 3900
-
-EMOCOES = [
-    "ansioso", "animado", "cansado", "focado",
-    "triste", "feliz", "nervoso", "motivado"
-]
-
-TEMAS = [
-    "investimento", "treino", "relacionamento",
-    "espiritualidade", "saúde", "trabalho",
-    "filho", "carreira", "finanças", "sophos"
-]
+MAX_DOC_CHARS = 9000
+MAX_TELEGRAM_CHARS = 3800
 
 GATILHOS_MEMORIA = [
     "lembre", "guarde", "salve", "registre",
@@ -110,14 +98,16 @@ Regras:
 
 
 # =============================================================================
-# INICIALIZAÇÃO DE SERVIÇOS
+# INICIALIZAÇÃO
 # =============================================================================
 
 TOKEN = os.environ.get("TOKEN_TELEGRAM")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 BOT_URL = os.environ.get("BOT_URL")
+
 INTERVALS_API_KEY = os.environ.get("INTERVALS_API_KEY")
 INTERVALS_ATHLETE_ID = os.environ.get("INTERVALS_ATHLETE_ID")
+
 FIREBASE_URL = os.environ.get(
     "FIREBASE_URL",
     "https://sophos-ddbed-default-rtdb.firebaseio.com"
@@ -177,18 +167,35 @@ def remover_acentos(texto: str) -> str:
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
 
 
-def limitar_texto(texto: str, limite: int = MAX_TELEGRAM_CHARS) -> str:
-    if not texto:
-        return ""
-    if len(texto) <= limite:
-        return texto
-    return texto[:limite - 80] + "\n\n[Resposta cortada por limite do Telegram.]"
+def dividir_texto(texto: str, limite: int = MAX_TELEGRAM_CHARS):
+    partes = []
+
+    texto = texto or ""
+
+    while len(texto) > limite:
+        corte = texto.rfind("\n", 0, limite)
+        if corte == -1:
+            corte = limite
+
+        partes.append(texto[:corte].strip())
+        texto = texto[corte:].strip()
+
+    if texto:
+        partes.append(texto)
+
+    return partes
 
 
-def escapar_markdown_v2(texto: str) -> str:
-    if texto is None:
-        return ""
-    return re.sub(r"([_*\[\]()~`>#+\-=|{}.!\\])", r"\\\1", str(texto))
+async def enviar_texto_longo(context, chat_id, texto, reply_markup=None):
+    partes = dividir_texto(texto)
+
+    for i, parte in enumerate(partes):
+        markup = reply_markup if i == len(partes) - 1 else None
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=parte,
+            reply_markup=markup
+        )
 
 
 def chamar_gpt_sync(messages, model=MODEL_MAIN, max_tokens=None):
@@ -196,6 +203,7 @@ def chamar_gpt_sync(messages, model=MODEL_MAIN, max_tokens=None):
         "model": model,
         "messages": messages,
     }
+
     if max_tokens:
         kwargs["max_completion_tokens"] = max_tokens
 
@@ -220,38 +228,6 @@ def deve_extrair_memoria(texto: str) -> bool:
     return any(g in t for g in GATILHOS_MEMORIA)
 
 
-def detectar_data_hoje(texto: str):
-    match = re.search(r"hoje\s+(é\s+dia\s+|é\s+)?(\d{1,2}/\d{1,2}/\d{2,4})", texto.lower())
-    if not match:
-        return None
-
-    data_str = match.group(2)
-
-    for fmt in ("%d/%m/%y", "%d/%m/%Y"):
-        try:
-            return datetime.strptime(data_str, fmt).date().isoformat()
-        except Exception:
-            continue
-
-    return None
-
-
-def detectar_emocao(texto: str):
-    t = texto.lower()
-    for emo in EMOCOES:
-        if emo in t:
-            return emo
-    return None
-
-
-def detectar_tema(texto: str):
-    t = texto.lower()
-    for tema in TEMAS:
-        if tema in t:
-            return tema
-    return None
-
-
 def marcadores_feedback(tipo):
     return InlineKeyboardMarkup([
         [
@@ -262,7 +238,7 @@ def marcadores_feedback(tipo):
 
 
 # =============================================================================
-# FIREBASE
+# FIREBASE / MEMÓRIA
 # =============================================================================
 
 def inicializar_usuario(user_id):
@@ -271,60 +247,9 @@ def inicializar_usuario(user_id):
     if not user_ref.get():
         user_ref.set({"init": {"timestamp": agora_iso()}})
 
-    for sub in [
-        "contexto",
-        "memoria",
-        "emocao",
-        "temas",
-        "score_emocional",
-        "feedback_respostas",
-        "perfil",
-    ]:
+    for sub in ["contexto", "memoria", "feedback_respostas"]:
         if not user_ref.child(sub).get():
             user_ref.child(sub).set({})
-
-
-def salvar_dado(user_id, tipo, valor):
-    ref.child(str(user_id)).child(tipo).push({
-        "valor": valor,
-        "data": agora_iso()
-    })
-
-
-def salvar_por_tema(user_id, tema, texto):
-    ref.child(str(user_id)).child("temas").child(tema).push({
-        "texto": texto,
-        "data": agora_iso()
-    })
-
-
-def salvar_emocao_por_tema(user_id, tema, emocao):
-    ref.child(str(user_id)).child("score_emocional").child(tema).push({
-        "emocao": emocao,
-        "data": agora_iso()
-    })
-
-
-def registrar_feedback(user_id, tipo_resposta, feedback, texto_resposta):
-    ref.child(str(user_id)).child("feedback_respostas").push({
-        "tipo": tipo_resposta,
-        "feedback": feedback,
-        "resposta": texto_resposta[:500],
-        "data": agora_iso()
-    })
-
-
-def salvar_memoria_relativa(user_id, chave, valor):
-    ref.child(str(user_id)).child("memoria").child(chave).set(valor)
-
-
-def obter_dados(user_id, tipo):
-    return ref.child(str(user_id)).child(tipo).get() or {}
-
-
-def buscar_por_tema(user_id, tema):
-    d = ref.child(str(user_id)).child("temas").child(tema).get()
-    return [x.get("texto", "") for x in d.values()] if d else []
 
 
 def salvar_contexto(user_id, texto):
@@ -357,6 +282,19 @@ def recuperar_contexto(user_id, limite=HISTORY_LIMIT):
     return "\n".join(partes)
 
 
+def salvar_memoria_relativa(user_id, chave, valor):
+    ref.child(str(user_id)).child("memoria").child(chave).set(valor)
+
+
+def registrar_feedback(user_id, tipo_resposta, feedback, texto_resposta):
+    ref.child(str(user_id)).child("feedback_respostas").push({
+        "tipo": tipo_resposta,
+        "feedback": feedback,
+        "resposta": texto_resposta[:500],
+        "data": agora_iso()
+    })
+
+
 def recuperar_feedback_counts(user_id):
     fb = ref.child(str(user_id)).child("feedback_respostas").get() or {}
 
@@ -373,10 +311,6 @@ def recuperar_feedback_counts(user_id):
 
     return likes, dislikes
 
-
-# =============================================================================
-# MEMÓRIA E RESUMO
-# =============================================================================
 
 def extrair_memoria_com_gpt(texto: str) -> dict:
     prompt = f"""
@@ -442,7 +376,7 @@ async def resumir_contexto_antigo(user_id):
         print("Erro ao resumir contexto:", e)
 
 
-async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5) -> list[str]:
+async def buscar_contexto_semantico(user_id: int, texto: str, top_k: int = 5):
     if not vec_index:
         return []
 
@@ -514,102 +448,11 @@ def salvar_memoria_e_indexar(user_id, memoria_nova: dict):
 
 
 # =============================================================================
-# PERFIL E PADRÕES
-# =============================================================================
-
-def definir_perfil_usuario(user_id):
-    emo_data = obter_dados(user_id, "emocao")
-    tema_data = obter_dados(user_id, "score_emocional")
-
-    freq = {}
-
-    for e in emo_data.values():
-        valor = e.get("valor")
-        if valor:
-            freq[valor] = freq.get(valor, 0) + 1
-
-    tema_freq = {
-        tema: len(entries)
-        for tema, entries in tema_data.items()
-        if isinstance(entries, dict)
-    }
-
-    perfil = "equilibrado"
-
-    if freq.get("triste", 0) > freq.get("feliz", 0):
-        perfil = "sensível empático"
-    elif freq.get("focado", 0) > freq.get("cansado", 0):
-        perfil = "estoico racional"
-    elif tema_freq.get("espiritualidade", 0) > tema_freq.get("trabalho", 0):
-        perfil = "visionário reflexivo"
-
-    ref.child(str(user_id)).child("perfil").set({
-        "tipo": perfil,
-        "data": agora_iso()
-    })
-
-    return perfil
-
-
-async def analisar_padroes(context: ContextTypes.DEFAULT_TYPE):
-    hoje = datetime.now(timezone.utc).date()
-    semana_atras = hoje - timedelta(days=7)
-
-    usuarios = ref.get() or {}
-
-    for uid_str in usuarios.keys():
-        emoc_entries = ref.child(uid_str).child("emocao").get() or {}
-        cont_emoc = {}
-
-        for e in emoc_entries.values():
-            try:
-                data = datetime.fromisoformat(e["data"]).date()
-                if data >= semana_atras:
-                    valor = e.get("valor")
-                    if valor:
-                        cont_emoc[valor] = cont_emoc.get(valor, 0) + 1
-            except Exception:
-                continue
-
-        humor_predominante = max(cont_emoc, key=cont_emoc.get) if cont_emoc else None
-
-        tema_entries = ref.child(uid_str).child("temas").get() or {}
-        cont_tema = {}
-
-        for tema, msgs in tema_entries.items():
-            if not isinstance(msgs, dict):
-                continue
-
-            for m in msgs.values():
-                try:
-                    data = datetime.fromisoformat(m["data"]).date()
-                    if data >= semana_atras:
-                        cont_tema[tema] = cont_tema.get(tema, 0) + 1
-                except Exception:
-                    continue
-
-        ref.child(uid_str).child("padroes_semanais").set({
-            "de": semana_atras.isoformat(),
-            "ate": hoje.isoformat(),
-            "emocoes": cont_emoc,
-            "temas": cont_tema,
-            "humor_predominante": humor_predominante
-        })
-
-# =============================================================================
-# INTERVALS.ICU
+# INTERVALS.ICU - RELATÓRIO
 # =============================================================================
 
 def normalizar_data_br(data_str):
-    """
-    Aceita:
-    - 25/05/26
-    - 25/05/2026
-    - 2026-05-25
-    Retorna date.
-    """
     data_str = data_str.strip()
-
     formatos = ["%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d"]
 
     for fmt in formatos:
@@ -639,7 +482,6 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
 
     newest_api = fim + timedelta(days=1)
 
-    # === ATIVIDADES ===
     ativ_resp = requests.get(
         f"{base}/activities",
         params={
@@ -661,7 +503,6 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     for a in ativ:
         data_local = (a.get("start_date_local") or "")[:10]
 
-        # Blindagem: garante que só entra treino dentro do período pedido
         try:
             data_treino = datetime.fromisoformat(data_local).date()
             if data_treino < inicio or data_treino > fim:
@@ -705,7 +546,6 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "total_sessoes": len(treinos),
     }
 
-    # === WELLNESS ===
     wel_resp = requests.get(
         f"{base}/wellness",
         params={
@@ -722,7 +562,6 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     if isinstance(wel, dict):
         wel = list(wel.values())
 
-    # Blindagem wellness dentro do período
     wel_filtrado = []
 
     for w in wel:
@@ -783,6 +622,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "condicionamento": condicionamento,
         "recuperacao": recuperacao,
     }
+
 
 async def relatorio_command(update, context):
     uid = update.effective_user.id
@@ -906,10 +746,9 @@ Cada insight deve aparecer apenas uma vez.
 
     await context.bot.send_message(
         update.effective_chat.id,
-        limitar_texto("📊 Relatório de Performance:\n\n" + resposta),
+        "📊 Relatório de Performance:\n\n" + resposta,
         reply_markup=marcadores_feedback("relatorio")
     )
-
 
 
 # =============================================================================
@@ -922,253 +761,21 @@ async def start(update, context):
 
     await context.bot.send_message(
         update.effective_chat.id,
-        "👋 Olá! Eu sou o Sophos. Pronto pra te ouvir e evoluir contigo 🧠"
+        "👋 Sophos online. Envie uma mensagem, áudio, arquivo ou use /relatorio."
     )
 
 
 async def comandos(update, context):
     msg = (
-        "📌 *Comandos disponíveis:*\n"
-        "/start — iniciar conversa\n"
-        "/perfil — ver perfil\n"
-        "/resumo — resumo emocional\n"
-        "/consultar <tema> — histórico por tema\n"
-        "/resumir <texto> — gerar resumo\n"
-        "/conselheiro — conselho emocional\n"
-        "/padroes — padrões semanais\n"
-        "/estatisticas — feedback das respostas\n"
-        "/exportar — backup Excel/TXT\n"
+        "📌 Comandos disponíveis:\n"
+        "/start — iniciar\n"
+        "/relatorio <dias> — relatório de performance\n"
+        "/relatorio 25/05/26 31/05/26 — relatório por período\n"
         "/processar_arquivo <instrução> — processar último arquivo pendente\n"
-        "/relatorio <dias> — análise completa de treino\n"
-        "/comandos — mostrar este menu"
-        
-        
+        "/comandos — mostrar menu"
     )
 
     await context.bot.send_message(update.effective_chat.id, msg)
-
-
-async def perfil_command(update, context):
-    uid = update.effective_user.id
-    perfil = ref.child(str(uid)).child("perfil").get()
-
-    if not perfil:
-        perfil_tipo = definir_perfil_usuario(uid)
-    else:
-        perfil_tipo = perfil.get("tipo", "desconhecido")
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"🧩 Perfil atual: {perfil_tipo}"
-    )
-
-
-async def resumo(update, context):
-    uid = update.effective_user.id
-    d = obter_dados(uid, "emocao")
-
-    if not d:
-        await context.bot.send_message(update.effective_chat.id, "Nenhuma emoção registrada.")
-        return
-
-    cnt = {}
-
-    for e in d.values():
-        valor = e.get("valor")
-        if valor:
-            cnt[valor] = cnt.get(valor, 0) + 1
-
-    texto = "📊 Resumo emocional:\n" + "\n".join(
-        f"- {k}: {v}x" for k, v in cnt.items()
-    )
-
-    await context.bot.send_message(update.effective_chat.id, texto)
-
-
-async def padroes_semanais_command(update, context):
-    uid = update.effective_user.id
-    dados = ref.child(str(uid)).child("padroes_semanais").get() or {}
-
-    if not dados:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="🔍 Ainda não há análise semanal disponível."
-        )
-        return
-
-    humor = dados.get("humor_predominante", "-")
-    emocoes = ", ".join(f"{k}: {v}" for k, v in dados.get("emocoes", {}).items()) or "-"
-    temas = ", ".join(f"{k}: {v}" for k, v in dados.get("temas", {}).items()) or "-"
-
-    texto = (
-        f"📅 Padrões de {dados.get('de')} até {dados.get('ate')}\n\n"
-        f"🧠 Humor predominante: {humor}\n"
-        f"🧠 Emoções: {emocoes}\n"
-        f"📂 Temas: {temas}"
-    )
-
-    await context.bot.send_message(update.effective_chat.id, texto)
-
-
-async def conselheiro(update, context):
-    uid = update.effective_user.id
-    d = obter_dados(uid, "emocao")
-
-    if not d or len(d) < 3:
-        await context.bot.send_message(update.effective_chat.id, "Poucos dados pra gerar conselho.")
-        return
-
-    recentes = list(d.values())[-7:]
-
-    prompt = (
-        "Com base nas emoções recentes abaixo, gere um conselho prático, direto e equilibrado:\n\n"
-        + "\n".join(f"- {e.get('data', '')[:10]}: {e.get('valor', '')}" for e in recentes)
-    )
-
-    r = chamar_gpt_sync(
-        [
-            {"role": "system", "content": ESTILO_SOPHOS},
-            {"role": "user", "content": prompt}
-        ],
-        model=MODEL_FAST,
-        max_tokens=700
-    )
-
-    context.user_data["ultima_resposta"] = r
-
-    await context.bot.send_message(
-        update.effective_chat.id,
-        limitar_texto("📜 " + r),
-        reply_markup=marcadores_feedback("conselheiro")
-    )
-
-
-async def consultar_tema(update, context):
-    uid = update.effective_user.id
-
-    if not context.args:
-        await context.bot.send_message(update.effective_chat.id, "Ex: /consultar treino")
-        return
-
-    tema = context.args[0].lower()
-    msgs = buscar_por_tema(uid, tema)
-
-    if not msgs:
-        await context.bot.send_message(update.effective_chat.id, f"Nenhum registro de '{tema}'.")
-        return
-
-    texto = f"📂 Últimos sobre '{tema}':\n" + "\n".join(msgs[-5:])
-    await context.bot.send_message(update.effective_chat.id, limitar_texto(texto))
-
-
-async def resumir(update, context):
-    if not context.args:
-        await context.bot.send_message(update.effective_chat.id, "Ex: /resumir <texto>")
-        return
-
-    orig = " ".join(context.args)
-
-    r = chamar_gpt_sync(
-        [{"role": "user", "content": f"Resuma de forma prática:\n\n{orig}"}],
-        model=MODEL_FAST,
-        max_tokens=700
-    )
-
-    context.user_data["ultima_resposta"] = r
-
-    await context.bot.send_message(
-        update.effective_chat.id,
-        limitar_texto("📝 " + r),
-        reply_markup=marcadores_feedback("resumir")
-    )
-
-
-async def estatisticas(update, context):
-    uid = update.effective_user.id
-    fb = ref.child(str(uid)).child("feedback_respostas").get() or {}
-
-    resumo_fb = {}
-
-    for e in fb.values():
-        if not isinstance(e, dict):
-            continue
-
-        resposta = e.get("resposta", "")
-        feedback = e.get("feedback")
-
-        if not resposta or feedback not in ["like", "dislike"]:
-            continue
-
-        chave = resposta[:120].replace("\n", " ")
-        resumo_fb.setdefault(chave, {"like": 0, "dislike": 0})
-        resumo_fb[chave][feedback] += 1
-
-    linhas = ["📊 Suas estatísticas de feedback:"]
-
-    if not resumo_fb:
-        linhas.append("Nenhum feedback registrado ainda.")
-    else:
-        for txt, cnt in resumo_fb.items():
-            linhas.append(f"- {txt} (👍 {cnt['like']} | 👎 {cnt['dislike']})")
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=limitar_texto("\n".join(linhas))
-    )
-
-
-async def exportar(update, context):
-    user_id = update.effective_user.id
-    dados = ref.child(str(user_id)).get()
-
-    if not dados:
-        await context.bot.send_message(update.effective_chat.id, "⚠️ Nenhum dado encontrado.")
-        return
-
-    registros = []
-
-    for tipo, entradas in dados.items():
-        if not isinstance(entradas, dict):
-            continue
-
-        for e in entradas.values():
-            if not isinstance(e, dict):
-                continue
-
-            valor = e.get("valor") or e.get("texto") or e.get("emocao")
-            data = e.get("data", "")
-
-            if valor:
-                registros.append({
-                    "tipo": tipo,
-                    "valor": valor,
-                    "data": data
-                })
-
-    if not registros:
-        await context.bot.send_message(update.effective_chat.id, "⚠️ Nenhum registro válido.")
-        return
-
-    df = pd.DataFrame(registros)
-
-    excel_path = f"sophos_{user_id}.xlsx"
-    txt_path = f"sophos_{user_id}.txt"
-
-    df.to_excel(excel_path, index=False)
-    df.to_csv(txt_path, index=False, sep="\t")
-
-    for path in (excel_path, txt_path):
-        async with aiofiles.open(path, "rb") as f:
-            data = await f.read()
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=InputFile(data, filename=os.path.basename(path))
-            )
-
-        try:
-            os.remove(path)
-        except Exception:
-            pass
 
 
 # =============================================================================
@@ -1195,7 +802,7 @@ async def feedback_handler(update, context):
     except Exception:
         pass
 
-    await q.message.reply_text("✅ Feedback registrado. Obrigado!")
+    await q.message.reply_text("✅ Feedback registrado.")
 
 
 # =============================================================================
@@ -1241,40 +848,15 @@ async def processar_texto(user_id, texto, update, context):
     inicializar_usuario(user_id)
 
     texto_original = texto.strip()
-    texto_lower = texto_original.lower()
 
     await resumir_contexto_antigo(user_id)
 
     salvar_contexto(user_id, texto_original)
 
-    # Memória só quando fizer sentido
     if deve_extrair_memoria(texto_original):
         memoria_nova = extrair_memoria_com_gpt(texto_original)
         salvar_memoria_e_indexar(user_id, memoria_nova)
 
-    # Data
-    dhoje = detectar_data_hoje(texto_original)
-
-    if dhoje:
-        salvar_memoria_relativa(user_id, "data_atual", dhoje)
-        await context.bot.send_message(update.effective_chat.id, f"📅 Data registrada: {dhoje}")
-
-    # Emoção
-    emocao = detectar_emocao(texto_lower)
-
-    if emocao:
-        salvar_dado(user_id, "emocao", emocao)
-        await context.bot.send_message(update.effective_chat.id, f"🧠 Emoção '{emocao}' registrada.")
-
-    # Tema
-    tema = detectar_tema(texto_lower)
-
-    if tema:
-        salvar_por_tema(user_id, tema, texto_original)
-        if emocao:
-            salvar_emocao_por_tema(user_id, tema, emocao)
-
-    # Estilo dinâmico
     likes, dislikes = recuperar_feedback_counts(user_id)
 
     estilo_dinamico = None
@@ -1284,14 +866,7 @@ async def processar_texto(user_id, texto, update, context):
     elif dislikes > likes + 5:
         estilo_dinamico = "Adote tom mais explicativo e didático."
 
-    # Contexto
     base = recuperar_contexto(user_id)
-
-    perfil = ref.child(str(user_id)).child("perfil").get() or {}
-    perfil_tipo = perfil.get("tipo", "")
-
-    if perfil_tipo:
-        base += f"\n\nPerfil detectado: {perfil_tipo}"
 
     sem_ctx = await buscar_contexto_semantico(user_id, texto_original, top_k=5)
 
@@ -1323,9 +898,10 @@ Mensagem atual do usuário:
 
     context.user_data["ultima_resposta"] = r
 
-    await context.bot.send_message(
+    await enviar_texto_longo(
+        context,
         update.effective_chat.id,
-        limitar_texto(r),
+        r,
         reply_markup=marcadores_feedback("geral")
     )
 
@@ -1340,43 +916,130 @@ async def mensagem(update, context):
 
 
 # =============================================================================
-# ARQUIVOS E IMAGENS
+# ARQUIVOS
 # =============================================================================
 
-def extrair_texto_arquivo(temp_path):
+def extrair_texto_arquivo(temp_path, file_name=""):
+    nome = (file_name or temp_path or "").lower()
     extracted_text = ""
 
-    if temp_path.lower().endswith(".pdf") and PdfReader:
+    if nome.endswith(".pdf") and PdfReader:
         reader = PdfReader(temp_path)
         pages = []
 
-        for p in reader.pages:
+        for i, p in enumerate(reader.pages, start=1):
             try:
-                pages.append(p.extract_text() or "")
+                texto_pagina = p.extract_text() or ""
+                if texto_pagina.strip():
+                    pages.append(f"\n--- Página {i} ---\n{texto_pagina}")
             except Exception:
                 continue
 
         extracted_text = "\n".join(pages).strip()
 
-    elif temp_path.lower().endswith(".docx") and docx:
+    elif nome.endswith(".docx") and docx:
         docx_doc = docx.Document(temp_path)
-        extracted_text = "\n".join(p.text for p in docx_doc.paragraphs).strip()
+        extracted_text = "\n".join(p.text for p in docx_doc.paragraphs if p.text).strip()
 
-    elif temp_path.lower().endswith((".xls", ".xlsx")):
-        df = pd.read_excel(temp_path, dtype=str)
-        extracted_text = df.fillna("").to_csv(sep="\t", index=False)
+    elif nome.endswith((".xls", ".xlsx")):
+        xls = pd.ExcelFile(temp_path)
+        partes = []
 
-    elif temp_path.lower().endswith((".png", ".jpg", ".jpeg")) and pytesseract and Image:
+        for sheet in xls.sheet_names[:5]:
+            df = pd.read_excel(temp_path, sheet_name=sheet, dtype=str)
+            partes.append(
+                f"\n--- Aba: {sheet} ---\n" +
+                df.fillna("").head(100).to_csv(sep="\t", index=False)
+            )
+
+        extracted_text = "\n".join(partes).strip()
+
+    elif nome.endswith((".csv", ".txt", ".md", ".json")):
+        with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
+            extracted_text = f.read().strip()
+
+    elif nome.endswith((".png", ".jpg", ".jpeg")) and pytesseract and Image:
         img = Image.open(temp_path)
-        extracted_text = pytesseract.image_to_string(img)
+        extracted_text = pytesseract.image_to_string(img).strip()
 
     return extracted_text.strip()
 
 
+def preparar_texto_documento(texto):
+    if not texto:
+        return ""
+
+    if len(texto) <= MAX_DOC_CHARS:
+        return texto
+
+    metade = MAX_DOC_CHARS // 2
+
+    return (
+        texto[:metade]
+        + "\n\n[... conteúdo intermediário cortado para economizar tokens ...]\n\n"
+        + texto[-metade:]
+    )
+
+
+async def analisar_documento(update, context, temp_path, file_name, instrucao):
+    extracted_text = extrair_texto_arquivo(temp_path, file_name=file_name)
+
+    if not extracted_text:
+        context.user_data["ultimo_arquivo_temp"] = temp_path
+        context.user_data["ultimo_arquivo_nome"] = file_name
+
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "Não consegui extrair texto automaticamente. Se for imagem escaneada/PDF escaneado, o OCR pode não estar disponível no Render. Use /processar_arquivo <instrução> para tentar novamente."
+        )
+        return
+
+    texto_preparado = preparar_texto_documento(extracted_text)
+
+    prompt = f"""
+Arquivo recebido: {file_name}
+
+Instrução do usuário:
+{instrucao}
+
+Texto extraído:
+{texto_preparado}
+
+Faça uma análise prática, objetiva e útil.
+
+Estruture assim:
+1. Resumo
+2. Pontos importantes
+3. Riscos, erros ou inconsistências
+4. Dados relevantes
+5. Ações recomendadas
+
+Se for planilha, destaque números, padrões e possíveis problemas.
+Se for contrato/documento técnico, destaque riscos, obrigações e brechas.
+Se for texto genérico, resuma e proponha próximos passos.
+"""
+
+    resposta = chamar_gpt_sync(
+        [
+            {"role": "system", "content": ESTILO_SOPHOS},
+            {"role": "user", "content": prompt}
+        ],
+        model=MODEL_FAST,
+        max_tokens=1200
+    )
+
+    context.user_data["ultima_resposta"] = resposta
+
+    await enviar_texto_longo(
+        context,
+        update.effective_chat.id,
+        "📄 Análise do arquivo:\n\n" + resposta,
+        reply_markup=marcadores_feedback("documento")
+    )
+
+
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    file_obj = None
-    file_name = None
     temp_path = None
 
     try:
@@ -1398,46 +1061,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.close(fd)
 
         await file_obj.download_to_drive(temp_path)
+
+        instrucao = update.message.caption or "Analise este arquivo de forma prática."
+
         await context.bot.send_message(update.effective_chat.id, "📥 Arquivo recebido. Processando...")
 
-        extracted_text = extrair_texto_arquivo(temp_path)
-
-        if not extracted_text:
-            context.user_data["ultimo_arquivo_temp"] = temp_path
-            await context.bot.send_message(
-                update.effective_chat.id,
-                "Não consegui extrair texto automaticamente. Use /processar_arquivo <instrução> se quiser tentar de novo."
-            )
-            return
-
-        prompt = f"""
-Texto extraído do arquivo:
-{extracted_text[:MAX_DOC_CHARS]}
-
-Faça uma análise prática:
-- resumo;
-- pontos importantes;
-- riscos ou inconsistências;
-- dados relevantes;
-- ações recomendadas.
-"""
-
-        resposta = chamar_gpt_sync(
-            [
-                {"role": "system", "content": ESTILO_SOPHOS},
-                {"role": "user", "content": prompt}
-            ],
-            model=MODEL_FAST,
-            max_tokens=1000
-        )
-
-        context.user_data["ultima_resposta"] = resposta
-
-        await context.bot.send_message(
-            update.effective_chat.id,
-            limitar_texto("📄 Análise:\n" + resposta),
-            reply_markup=marcadores_feedback("documento")
-        )
+        await analisar_documento(update, context, temp_path, file_name, instrucao)
 
     except Exception as e:
         print("Erro handle_media:", e)
@@ -1454,9 +1083,13 @@ Faça uma análise prática:
 
 async def processar_ultimo_arquivo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     temp_path = context.user_data.get("ultimo_arquivo_temp")
+    file_name = context.user_data.get("ultimo_arquivo_nome", "arquivo")
 
     if not temp_path or not os.path.exists(temp_path):
-        await context.bot.send_message(update.effective_chat.id, "Nenhum arquivo pendente encontrado.")
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "Nenhum arquivo pendente encontrado. Envie o arquivo novamente com uma legenda dizendo o que deseja."
+        )
         return
 
     instr = " ".join(context.args) if context.args else ""
@@ -1464,46 +1097,12 @@ async def processar_ultimo_arquivo_cmd(update: Update, context: ContextTypes.DEF
     if not instr:
         await context.bot.send_message(
             update.effective_chat.id,
-            "Diga o que quer que eu faça com o arquivo: resumir/analisar/validar/extrair dados."
+            "Diga o que quer que eu faça com o arquivo.\nEx: /processar_arquivo resuma os riscos e pontos de atenção"
         )
         return
 
     try:
-        extracted_text = extrair_texto_arquivo(temp_path)
-
-        if not extracted_text:
-            await context.bot.send_message(
-                update.effective_chat.id,
-                "Não consegui extrair texto automaticamente deste arquivo."
-            )
-            return
-
-        prompt = f"""
-Texto extraído do arquivo:
-{extracted_text[:MAX_DOC_CHARS]}
-
-Instrução do usuário:
-{instr}
-
-Responda de forma prática e direta.
-"""
-
-        resposta = chamar_gpt_sync(
-            [
-                {"role": "system", "content": ESTILO_SOPHOS},
-                {"role": "user", "content": prompt}
-            ],
-            model=MODEL_FAST,
-            max_tokens=1000
-        )
-
-        context.user_data["ultima_resposta"] = resposta
-
-        await context.bot.send_message(
-            update.effective_chat.id,
-            limitar_texto("📄 Resultado:\n" + resposta),
-            reply_markup=marcadores_feedback("documento")
-        )
+        await analisar_documento(update, context, temp_path, file_name, instr)
 
     except Exception as e:
         print("Erro processar_ultimo_arquivo:", e)
@@ -1516,6 +1115,7 @@ Responda de forma prática e direta.
             pass
 
         context.user_data.pop("ultimo_arquivo_temp", None)
+        context.user_data.pop("ultimo_arquivo_nome", None)
 
 
 # =============================================================================
@@ -1525,25 +1125,10 @@ Responda de forma prática e direta.
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.job_queue.run_repeating(
-        analisar_padroes,
-        interval=timedelta(days=7),
-        first=30
-    )
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("comandos", comandos))
-    app.add_handler(CommandHandler("perfil", perfil_command))
-    app.add_handler(CommandHandler("resumo", resumo))
-    app.add_handler(CommandHandler("consultar", consultar_tema))
-    app.add_handler(CommandHandler("resumir", resumir))
-    app.add_handler(CommandHandler("conselheiro", conselheiro))
-    app.add_handler(CommandHandler("padroes", padroes_semanais_command))
-    app.add_handler(CommandHandler("estatisticas", estatisticas))
-    app.add_handler(CommandHandler("exportar", exportar))
-    app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
     app.add_handler(CommandHandler("relatorio", relatorio_command))
-
+    app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
 
     app.add_handler(CallbackQueryHandler(feedback_handler))
     app.add_handler(MessageHandler(filters.VOICE, voz))
