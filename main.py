@@ -58,7 +58,7 @@ MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST")
 MODEL_EMBED = "text-embedding-3-small"
 
 MAX_DOC_CHARS = 9000
-MAX_TELEGRAM_CHARS = 3800
+MAX_TELEGRAM_CHARS = 5000
 
 GATILHOS_MEMORIA = [
     "lembre", "guarde", "salve", "registre",
@@ -757,12 +757,13 @@ Cada insight deve aparecer apenas uma vez.
 
     context.user_data["ultima_resposta"] = resposta
 
-    await context.bot.send_message(
-        update.effective_chat.id,
-        "📊 Relatório de Performance:\n\n" + resposta,
-        reply_markup=marcadores_feedback("relatorio")
+    await enviar_texto_longo(
+    context,
+    update.effective_chat.id,
+    "📊 Relatório de Performance:\n\n" + resposta,
+    reply_markup=marcadores_feedback("relatorio")
     )
-
+    
 # =============================================================================
 # COMANDOS
 # =============================================================================
