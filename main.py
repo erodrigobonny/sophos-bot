@@ -45,8 +45,6 @@ try:
 except Exception:
     docx = None
 
-from PIL import Image
-
 
 # =============================================================================
 # CONFIGURAÇÕES
@@ -843,6 +841,45 @@ async def voz(update, context):
 # PROCESSAMENTO PRINCIPAL
 # =============================================================================
 
+def escolher_modelo(texto: str) -> str:
+    t = texto.lower().strip()
+
+    gatilhos_complexos = [
+        "analise", "analisa", "avaliar", "avalie",
+        "compare", "comparar",
+        "estratégia", "decisão", "risco",
+        "investimento", "contrato", "carreira",
+        "relatório", "treino", "suplemento",
+        "código", "corrija", "erro", "bug",
+        "projeto", "planejamento", "sophos",
+        "jurídico", "financeiro", "performance"
+    ]
+
+    if any(g in t for g in gatilhos_complexos):
+        return MODEL_MAIN
+
+    if len(t) < 120:
+        return MODEL_FAST
+
+    return MODEL_MAIN
+
+
+def deve_buscar_memoria(texto: str) -> bool:
+    t = texto.lower().strip()
+
+    if len(t) < 80:
+        return False
+
+    gatilhos = [
+        "lembra", "lembrar", "com base",
+        "histórico", "antes", "já falei",
+        "minha rotina", "meu treino", "meus dados",
+        "minha carteira", "meu filho", "sophos",
+        "meu trabalho", "minha dieta"
+    ]
+
+    return any(g in t for g in gatilhos)
+
 async def processar_texto(user_id, texto, update, context):
     inicializar_usuario(user_id)
 
@@ -867,11 +904,13 @@ async def processar_texto(user_id, texto, update, context):
 
     base = recuperar_contexto(user_id)
 
-    sem_ctx = await buscar_contexto_semantico(user_id, texto_original, top_k=5)
+    sem_ctx = []
+    if deve_buscar_memoria(texto_original):
+        sem_ctx = await buscar_contexto_semantico(user_id, texto_original, top_k=5)
 
     if sem_ctx:
-        base += "\n\nMemórias relevantes:\n" + "\n".join(f"- {m}" for m in sem_ctx)
-
+        base += "\n\nMemórias relevantes:\n" + "\n".join(f"- {m}" for m in sem_ctx) 
+    
     prompt = f"""
 Contexto útil:
 {base}
@@ -888,9 +927,9 @@ Mensagem atual do usuário:
         messages.append({"role": "system", "content": estilo_dinamico})
 
     messages.append({"role": "user", "content": prompt})
-
+   
     try:
-        r = chamar_gpt_sync(messages, model=MODEL_MAIN)
+        r = chamar_gpt_sync(messages, model=escolher_modelo(texto_original))    
     except Exception as e:
         print("❌ Erro OpenAI:", str(e))
         r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
@@ -914,6 +953,8 @@ async def mensagem(update, context):
     await processar_texto(uid, txt, update, context)
 
 def analisar_imagem_com_ia(temp_path, instrucao="Analise esta imagem."):
+    modelo = MODEL_MAIN if "modo avançado" in (instrucao or "").lower() else MODEL_FAST
+
     with open(temp_path, "rb") as img:
         base64_image = base64.b64encode(img.read()).decode("utf-8")
 
@@ -935,8 +976,8 @@ Se for print de treino, dashboard, planilha, contrato, conversa ou documento, ad
 """
 
     resp = client.chat.completions.create(
-        model=MODEL_MAIN,
-        messages=[
+        model=modelo,
+        messages=[   
             {"role": "system", "content": ESTILO_SOPHOS},
             {
                 "role": "user",
@@ -998,11 +1039,7 @@ def extrair_texto_arquivo(temp_path, file_name=""):
     elif nome.endswith((".csv", ".txt", ".md", ".json")):
         with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
             extracted_text = f.read().strip()
-
-    elif nome.endswith((".png", ".jpg", ".jpeg")) and pytesseract and Image:
-        img = Image.open(temp_path)
-        extracted_text = pytesseract.image_to_string(img).strip()
-
+   
     return extracted_text.strip()
 
 
