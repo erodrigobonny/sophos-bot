@@ -873,6 +873,24 @@ Estruture a resposta assim:
 
 🎯 RECOMENDAÇÃO
 — ajuste prático para a próxima semana
+
+IMPORTANTE:
+
+A resposta deve ter no máximo 4000 caracteres.
+
+Remova:
+- repetições
+- explicações redundantes
+- frases motivacionais
+- contextualizações longas
+
+Se duas frases transmitirem a mesma informação, mantenha apenas a mais objetiva.
+
+Utilize linguagem executiva e direta, semelhante a um dashboard de performance.
+
+Evite narrativas longas.
+Evite repetir conclusões em seções diferentes.
+Cada insight deve aparecer apenas uma vez.
 """
 
     resposta = chamar_gpt_sync(
