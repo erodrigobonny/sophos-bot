@@ -194,8 +194,7 @@ async def enviar_texto_longo(context, chat_id, texto, reply_markup=None):
             reply_markup=markup
         )
 
-
-def chamar_gpt_sync(messages, model=MODEL_MAIN, max_tokens=None):
+def chamar_gpt_sync(messages, model=MODEL_MAIN, max_tokens=None, user_id=None):
     kwargs = {
         "model": model,
         "messages": messages,
@@ -205,8 +204,22 @@ def chamar_gpt_sync(messages, model=MODEL_MAIN, max_tokens=None):
         kwargs["max_completion_tokens"] = max_tokens
 
     resp = client.chat.completions.create(**kwargs)
-    return resp.choices[0].message.content or ""
 
+    # Log de uso no Firebase (custo zero de chamada extra)
+    try:
+        if user_id and resp.usage:
+            uso = {
+                "modelo": model,
+                "input_tokens": resp.usage.prompt_tokens,
+                "output_tokens": resp.usage.completion_tokens,
+                "total_tokens": resp.usage.total_tokens,
+                "data": agora_iso(),
+            }
+            ref.child(str(user_id)).child("uso_tokens").push(uso)
+    except Exception as e:
+        print("Erro ao logar uso:", e)
+
+    return resp.choices[0].message.content or ""
 
 def gerar_embedding(texto: str):
     resp = client.embeddings.create(
@@ -736,7 +749,8 @@ Cada insight deve aparecer apenas uma vez.
             {"role": "user", "content": prompt}
         ],
         model=MODEL_MAIN,
-        max_tokens=1500
+        max_tokens=1500,
+        user_id=uid
     )
 
     context.user_data["ultima_resposta"] = resposta
@@ -761,6 +775,76 @@ async def start(update, context):
         "👋 Sophos online. Envie uma mensagem, áudio, arquivo ou use /relatorio."
     )
 
+async def custos_command(update, context):
+    uid = update.effective_user.id
+
+    uso_data = ref.child(str(uid)).child("uso_tokens").get() or {}
+
+    if not uso_data:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "Nenhum registro de uso ainda."
+        )
+        return
+
+    from datetime import datetime, timezone
+    agora = datetime.now(timezone.utc)
+    mes_atual = agora.strftime("%Y-%m")
+
+    total_input = 0
+    total_output = 0
+    por_modelo = {}
+
+    for entry in uso_data.values():
+        if not isinstance(entry, dict):
+            continue
+
+        data_entry = entry.get("data", "")
+        if not data_entry.startswith(mes_atual):
+            continue
+
+        modelo = entry.get("modelo", "desconhecido")
+        inp = entry.get("input_tokens", 0)
+        out = entry.get("output_tokens", 0)
+
+        total_input += inp
+        total_output += out
+
+        if modelo not in por_modelo:
+            por_modelo[modelo] = {"input": 0, "output": 0}
+        por_modelo[modelo]["input"] += inp
+        por_modelo[modelo]["output"] += out
+
+    # Preços aproximados por 1M tokens (ajuste conforme sua conta)
+    PRECOS = {
+        "gpt-5.4": {"input": 2.50, "output": 15.00},
+        "gpt-5.4-mini": {"input": 0.75, "output": 3.00},
+    }
+
+    custo_total = 0.0
+    linhas = [f"💰 Uso de tokens — {mes_atual}\n"]
+
+    for modelo, uso in por_modelo.items():
+        preco = PRECOS.get(modelo, {"input": 2.50, "output": 10.00})
+        custo_inp = uso["input"] / 1_000_000 * preco["input"]
+        custo_out = uso["output"] / 1_000_000 * preco["output"]
+        custo_mod = custo_inp + custo_out
+        custo_total += custo_mod
+
+        linhas.append(
+            f"{modelo}\n"
+            f"  Input:  {uso['input']:,} tokens\n"
+            f"  Output: {uso['output']:,} tokens\n"
+            f"  Custo:  ~US$ {custo_mod:.4f}\n"
+        )
+
+    linhas.append(f"\nTotal estimado: ~US$ {custo_total:.4f}")
+    linhas.append(f"({total_input + total_output:,} tokens no mês)")
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        "\n".join(linhas)
+    )
 
 async def comandos(update, context):
     msg = (
@@ -769,6 +853,7 @@ async def comandos(update, context):
         "/relatorio <dias> — relatório de performance\n"
         "/relatorio <xx/xx/xx xx/xx/xx> — relatório por período\n"
         "/processar_arquivo <instrução> — processar último arquivo pendente\n"
+        "/custos — uso e custo estimado do mês\n"
         "/comandos — mostrar menu"
     )
 
@@ -929,7 +1014,7 @@ Mensagem atual do usuário:
     messages.append({"role": "user", "content": prompt})
    
     try:
-        r = chamar_gpt_sync(messages, model=escolher_modelo(texto_original))    
+        r = chamar_gpt_sync(messages, model=escolher_modelo(texto_original), user_id=user_id)    
     except Exception as e:
         print("❌ Erro OpenAI:", str(e))
         r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
@@ -1231,6 +1316,7 @@ def main():
     app.add_handler(CommandHandler("comandos", comandos))
     app.add_handler(CommandHandler("relatorio", relatorio_command))
     app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
+    app.add_handler(CommandHandler("custos", custos_command))
 
     app.add_handler(CallbackQueryHandler(feedback_handler))
     app.add_handler(MessageHandler(filters.VOICE, voz))
