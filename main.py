@@ -845,6 +845,10 @@ Contexto técnico das métricas:
 - potencia_w = potência média da sessão quando disponível
 - cadencia = cadência média da sessão quando disponível
 - ftp = potência funcional de limiar, quando disponível
+- stress_medio = nível de stress
+- readiness_medio = disposição
+- body_battery_medio = batéria do corpo
+
 - vo2max = estimativa de capacidade aeróbia
 Quando disponível:
 - informe valor atual
@@ -877,11 +881,11 @@ Estruture a resposta assim:
 — volume por modalidade, carga total, sessões, zonas de treinos, destaque potência, cadência e FTP quando houver dados relevantes
 
 🔗 CORRELAÇÕES
-— relação entre sono, HRV, RHR, carga aguda, readiness e qualidade dos treinos
+— relação entre sono, HRV, RHR, carga aguda, disposição, batéria do corpo, nível de stress e qualidade dos treinos
 — padrões que se repetem
 
 🧠 CONDICIONAMENTO
-— leitura de fitness (CTL), fadiga (ATL),  forma (TSB), VO2MAX e relação carga aguda/crônica (ACWR) em linguagem simples.
+— leitura de fitness (CTL), fadiga (ATL),  forma (TSB), VO2MAX, Body Battery, Disposição e relação carga aguda/crônica (ACWR) em linguagem simples.
 Explique:
 - nível atual
 - tendência
