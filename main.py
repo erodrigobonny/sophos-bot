@@ -477,6 +477,110 @@ def normalizar_data_br(data_str):
 
     raise ValueError(f"Data inválida: {data_str}")
 
+def calcular_indicadores(d):
+    totais = d.get("totais", {})
+    cond = d.get("condicionamento", {})
+    rec = d.get("recuperacao", {})
+    treinos = d.get("treinos", [])
+    dias = d.get("dias", 0) or 0
+
+    carga = totais.get("carga_total") or 0
+    sessoes = totais.get("total_sessoes") or 0
+    ctl = cond.get("fitness_ctl") or 0
+    atl = cond.get("fadiga_atl") or 0
+
+    dias_ativos = len(set(t.get("data") for t in treinos if t.get("data")))
+
+    carga_por_modalidade = {}
+
+    for t in treinos:
+        tipo = (t.get("tipo") or "outros").lower()
+
+        if "run" in tipo:
+            grupo = "corrida"
+        elif "ride" in tipo or "bike" in tipo:
+            grupo = "bike"
+        elif "swim" in tipo:
+            grupo = "natacao"
+        elif "strength" in tipo or "weight" in tipo:
+            grupo = "forca"
+        else:
+            grupo = "outros"
+
+        carga_t = t.get("carga_treino") or 0
+        carga_por_modalidade[grupo] = carga_por_modalidade.get(grupo, 0) + carga_t
+
+    distribuicao_carga_pct = {
+        k: round((v / carga) * 100, 1) if carga else 0
+        for k, v in carga_por_modalidade.items()
+    }
+
+    maior_carga = max(treinos, key=lambda t: t.get("carga_treino") or 0, default=None)
+    maior_duracao = max(treinos, key=lambda t: t.get("dur_min") or 0, default=None)
+    maior_distancia = max(treinos, key=lambda t: t.get("dist_km") or 0, default=None)
+
+    def treino_resumo(t):
+        if not t:
+            return None
+
+        return {
+            "tipo": t.get("tipo"),
+            "nome": t.get("nome"),
+            "data": t.get("data"),
+            "dist_km": t.get("dist_km"),
+            "dur_min": t.get("dur_min"),
+            "carga": t.get("carga_treino"),
+            "fc_med": t.get("fc_med"),
+        }
+
+    sono_medio = rec.get("sono_medio_h")
+    hrv_medio = rec.get("hrv_medio")
+    rhr_medio = rec.get("rhr_medio")
+
+    carga_por_dia = round(carga / dias, 1) if dias else 0
+    acwr = round(atl / ctl, 2) if ctl else None
+
+    alerta_recuperacao = "baixo"
+    sinais = []
+
+    # Cortes genéricos e conservadores.
+    # Versão futura: comparar contra baseline individual salva no Firebase.
+    if sono_medio is not None and sono_medio < 6.0:
+        sinais.append("sono baixo")
+
+    if hrv_medio is not None and hrv_medio < 40:
+        sinais.append("HRV baixo")
+
+    if rhr_medio is not None and rhr_medio > 60:
+        sinais.append("RHR elevado")
+
+    if acwr is not None and acwr > 1.4:
+        sinais.append("carga aguda elevada")
+
+    if len(sinais) >= 3:
+        alerta_recuperacao = "alto"
+    elif len(sinais) == 2:
+        alerta_recuperacao = "moderado"
+
+    return {
+        "acwr": acwr,
+        "carga_por_dia": carga_por_dia,
+        "carga_por_sessao": round(carga / sessoes, 1) if sessoes else 0,
+        "densidade_treino": round(sessoes / dias, 2) if dias else 0,
+        "dias_ativos": dias_ativos,
+        "dias_off": max(dias - dias_ativos, 0),
+        "dias_ativos_pct": round((dias_ativos / dias) * 100, 1) if dias else 0,
+        "distribuicao_carga_pct": distribuicao_carga_pct,
+        "maior_treino_carga": treino_resumo(maior_carga),
+        "maior_treino_duracao": treino_resumo(maior_duracao),
+        "maior_treino_distancia": treino_resumo(maior_distancia),
+        "alerta_recuperacao": {
+            "nivel": alerta_recuperacao,
+            "sinais": sinais,
+            "observacao": "cortes genéricos provisórios; ideal futuro é comparar com baseline individual"
+        }
+    }
+
 def coletar_intervals(dias=7, inicio=None, fim=None):
     hoje = datetime.now().date()
 
@@ -507,6 +611,9 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
 
     ativ_resp.raise_for_status()
     ativ = ativ_resp.json()
+
+    print("\n===== ACTIVITY SAMPLE =====")
+    print(json.dumps(ativ[0], indent=2, ensure_ascii=False))
 
     if isinstance(ativ, dict):
         ativ = list(ativ.values())
@@ -572,10 +679,14 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     wel_resp.raise_for_status()
     wel = wel_resp.json()
 
+    print("\n===== WELLNESS SAMPLE =====")
+    print(json.dumps(wel[0], indent=2, ensure_ascii=False))
+
     if isinstance(wel, dict):
         wel = list(wel.values())
 
     wel_filtrado = []
+    wel.sort(key=lambda w: str(w.get("id") or w.get("date") or w.get("day") or ""))
 
     for w in wel:
         data_w = w.get("id") or w.get("date") or w.get("day")
@@ -625,6 +736,10 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "sono_score_medio": media("sleepScore"),
         "readiness_medio": media("readiness"),
         "peso_medio": media("weight"),
+        "passos_medio": media("steps"),
+        "stress_medio": media("avgStress"),
+        "body_battery_medio": media("bodyBattery"),
+        "spo2_medio": media("spO2")
     }
 
     return {
@@ -635,6 +750,10 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "condicionamento": condicionamento,
         "recuperacao": recuperacao,
     }
+
+    resultado["indicadores"] = calcular_indicadores(resultado)
+
+    return resultado
 
 async def relatorio_command(update, context):
     uid = update.effective_user.id
@@ -706,6 +825,26 @@ Contexto técnico das métricas:
 - fadiga_atl = fadiga aguda recente
 - forma_tsb = forma (CTL menos ATL; positivo = descansado, negativo = sobrecarregado)
 - carga_treino = training load por sessão
+
+INDICADORES JÁ CALCULADOS (use os valores prontos, NÃO recalcule):
+- acwr = relação carga aguda/crônica:
+  < 0.8 = subestímulo / baixa carga aguda
+  0.8 a 1.3 = zona controlada
+  1.3 a 1.5 = atenção
+  > 1.5 = risco aumentado de lesão
+- carga_por_dia = carga total dividida pelos dias do período
+- carga_por_sessao = carga total dividida pelo número de sessões
+- densidade_treino = sessões por dia
+- dias_ativos_pct = percentual de dias com treino
+- distribuicao_carga_pct = percentual da carga por modalidade
+- maior_treino_carga, maior_treino_duracao, maior_treino_distancia = destaques do período
+- alerta_recuperacao = sinal indireto de baixa recuperação/imunidade, não diagnóstico médico
+
+Use os números do campo "indicadores" exatamente como vieram.
+Não recalcule indicadores.
+Interprete combinações de sono baixo, HRV baixo, RHR elevado e carga aguda elevada.
+Se alerta_recuperacao vier moderado ou alto, recomende reduzir intensidade, priorizar sono e observar sintomas.
+Não afirme doença; fale em maior risco de baixa recuperação.
 
 Estruture a resposta assim:
 
