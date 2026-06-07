@@ -649,6 +649,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "intensidade": a.get("icu_intensity"),
             "trimp": a.get("trimp"),
             "cal": a.get("calories"),
+            
             "ftp": a.get("icu_ftp") or a.get("icu_pm_ftp") or a.get("icu_rolling_ftp"),
             "power_range": a.get("power_range"),
             "power_load": a.get("power_load"),
