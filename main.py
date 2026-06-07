@@ -649,9 +649,19 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "intensidade": a.get("icu_intensity"),
             "trimp": a.get("trimp"),
             "cal": a.get("calories"),
-            "ftp": a.get("ftp"),
+            "ftp": a.get("icu_ftp") or a.get("icu_pm_ftp") or a.get("icu_rolling_ftp"),
             "power_range": a.get("power_range"),
             "power_load": a.get("power_load"),
+            "lthr": a.get("lthr"),
+            "hr_load": a.get("hr_load"),
+            "hr_load_type": a.get("hr_load_type"),
+            "zonas_fc": a.get("icu_hr_zones"),
+            "zona_fc_tempos": a.get("icu_hr_zone_times"),
+            "stride_m": a.get("average_stride"),
+            "eficiencia": a.get("icu_efficiency_factor"),
+            "decoupling": a.get("decoupling"),
+            
+            
         })
 
     def soma_tipo(chave):
@@ -819,7 +829,8 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 4500 caracteres, incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
+Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 4500 caracteres, 
+incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
 Analise meus dados do período {d['periodo']}.
 
 DADOS COMPLETOS:
@@ -833,6 +844,11 @@ Contexto técnico das métricas:
 - potencia_w = potência média da sessão quando disponível
 - cadencia = cadência média da sessão quando disponível
 - ftp = potência funcional de limiar, quando disponível
+- vo2max = estimativa de capacidade aeróbia
+Quando disponível:
+- informe valor atual
+- informe tendência (subindo, estável ou caindo)
+- relacione com CTL, ATL e TSB
 
 INDICADORES JÁ CALCULADOS (use os valores prontos, NÃO recalcule):
 - acwr = relação carga aguda/crônica:
@@ -856,7 +872,7 @@ Não afirme doença; fale em maior risco de baixa recuperação.
 
 Estruture a resposta assim:
 
-📊 NÚMEROS DA SEMANA
+📊 RESUMO DO PERÍODO
 — volume por modalidade, carga total, sessões, zonas de treinos, destaque potência, cadência e FTP quando houver dados relevantes
 
 🔗 CORRELAÇÕES
@@ -864,11 +880,21 @@ Estruture a resposta assim:
 — padrões que se repetem
 
 🧠 CONDICIONAMENTO
-— leitura de fitness (CTL), fadiga (ATL),  forma (TSB) e relação carga aguda/crônica (ACWR) em linguagem simples.
-— tendência: estou ganhando ou perdendo condicionamento? e risco de lesão
+— leitura de fitness (CTL), fadiga (ATL),  forma (TSB), VO2MAX e relação carga aguda/crônica (ACWR) em linguagem simples.
+Explique:
+- nível atual
+- tendência
+- impacto na performance
+- risco de lesão
+
+📈 TENDÊNCIAS
+- O que está melhorando
+- O que está piorando
+- O principal gargalo atual
 
 ⚠️ PONTO DE ATENÇÃO
-— maior risco (overtraining/subtreino) ou oportunidade. Tendência de baixar imunidade.
+— maior risco (overtraining/subtreino) ou oportunidade. Risco de recuperação comprometida e maior vulnerabilidade fisiológica.
+Não utilize termos diagnósticos.
 
 🎯 RECOMENDAÇÃO
 — ajuste prático para a próxima semana
@@ -885,6 +911,13 @@ Utilize linguagem executiva e direta, semelhante a um dashboard de performance.
 Evite narrativas longas.
 Evite repetir conclusões em seções diferentes.
 Cada insight deve aparecer apenas uma vez.
+Priorize:
+1. Principal ponto forte
+2. Principal gargalo
+3. Principal risco
+4. Melhor ação prática
+Se houver excesso de informações, descarte as menos relevantes.
+Priorize conclusão sobre descrição.
 """
 
     resposta = chamar_gpt_sync(
