@@ -649,6 +649,9 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "intensidade": a.get("icu_intensity"),
             "trimp": a.get("trimp"),
             "cal": a.get("calories"),
+            "ftp": a.get("ftp"),
+            "power_range": a.get("power_range"),
+            "power_load": a.get("power_load"),
         })
 
     def soma_tipo(chave):
@@ -726,6 +729,8 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "fadiga_atl": round(ultimo.get("atl") or 0, 1),
         "forma_tsb": round((ultimo.get("ctl") or 0) - (ultimo.get("atl") or 0), 1),
         "vo2max": ultimo.get("vo2max"),
+        "ftp": ultimo.get("ftp"),
+        "ftp_wkg": ultimo.get("ftp_wkg"),
         "tendencia_fitness": round((ultimo.get("ctl") or 0) - (primeiro.get("ctl") or 0), 1),
     }
 
@@ -814,7 +819,7 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 4000 caracteres, incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
+Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 4500 caracteres, incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
 Analise meus dados do período {d['periodo']}.
 
 DADOS COMPLETOS:
@@ -825,6 +830,9 @@ Contexto técnico das métricas:
 - fadiga_atl = fadiga aguda recente
 - forma_tsb = forma (CTL menos ATL; positivo = descansado, negativo = sobrecarregado)
 - carga_treino = training load por sessão
+- potencia_w = potência média da sessão quando disponível
+- cadencia = cadência média da sessão quando disponível
+- ftp = potência funcional de limiar, quando disponível
 
 INDICADORES JÁ CALCULADOS (use os valores prontos, NÃO recalcule):
 - acwr = relação carga aguda/crônica:
@@ -849,36 +857,31 @@ Não afirme doença; fale em maior risco de baixa recuperação.
 Estruture a resposta assim:
 
 📊 NÚMEROS DA SEMANA
-— volume por modalidade, carga total, sessões
+— volume por modalidade, carga total, sessões, zonas de treinos, destaque potência, cadência e FTP quando houver dados relevantes
 
 🔗 CORRELAÇÕES
-— relação entre HRV/sono/readiness e qualidade dos treinos
+— relação entre sono, HRV, RHR, carga aguda, readiness e qualidade dos treinos
 — padrões que se repetem
 
 🧠 CONDICIONAMENTO
-— leitura de fitness (CTL), fadiga (ATL) e forma (TSB) em linguagem simples
-— tendência: estou ganhando ou perdendo condicionamento?
+— leitura de fitness (CTL), fadiga (ATL),  forma (TSB) e relação carga aguda/crônica (ACWR) em linguagem simples.
+— tendência: estou ganhando ou perdendo condicionamento? e risco de lesão
 
 ⚠️ PONTO DE ATENÇÃO
-— maior risco (overtraining/subtreino) ou oportunidade
+— maior risco (overtraining/subtreino) ou oportunidade. Tendência de baixar imunidade.
 
 🎯 RECOMENDAÇÃO
 — ajuste prático para a próxima semana
 
 IMPORTANTE:
-
-A resposta deve ter no máximo 4000 caracteres.
-
+A resposta deve ter no máximo 4500 caracteres.
 Remova:
 - repetições
 - explicações redundantes
 - frases motivacionais
 - contextualizações longas
-
 Se duas frases transmitirem a mesma informação, mantenha apenas a mais objetiva.
-
 Utilize linguagem executiva e direta, semelhante a um dashboard de performance.
-
 Evite narrativas longas.
 Evite repetir conclusões em seções diferentes.
 Cada insight deve aparecer apenas uma vez.
