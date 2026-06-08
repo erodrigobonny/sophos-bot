@@ -758,7 +758,8 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "spo2_medio": media("spO2")
     }
 
-    return {
+
+    resultado = {
         "periodo": f"{inicio.isoformat()} a {fim.isoformat()}",
         "dias": (fim - inicio).days + 1,
         "totais": totais,
