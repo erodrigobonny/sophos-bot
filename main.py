@@ -772,6 +772,87 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
 
     return resultado
 
+def formatar_metricas(d):
+    totais = d.get("totais", {})
+    cond = d.get("condicionamento", {})
+    rec = d.get("recuperacao", {})
+    ind = d.get("indicadores", {})
+    treinos = d.get("treinos", [])
+
+    linhas = []
+
+    linhas.append("📊 MÉTRICAS DE PERFORMANCE")
+    linhas.append(f"Período: {d.get('periodo')}")
+    linhas.append(f"Dias: {d.get('dias')}")
+    linhas.append("")
+
+    linhas.append("1. TOTAIS")
+    linhas.append(f"Sessões: {totais.get('total_sessoes')}")
+    linhas.append(f"Carga total: {totais.get('carga_total')}")
+    linhas.append(f"Calorias: {totais.get('calorias')}")
+    linhas.append(f"Natação: {totais.get('natacao_m')} m")
+    linhas.append(f"Bike: {totais.get('bike_km')} km")
+    linhas.append(f"Corrida: {totais.get('corrida_km')} km")
+    linhas.append("")
+
+    linhas.append("2. CONDICIONAMENTO")
+    linhas.append(f"CTL / Fitness: {cond.get('fitness_ctl')}")
+    linhas.append(f"ATL / Fadiga: {cond.get('fadiga_atl')}")
+    linhas.append(f"TSB / Forma: {cond.get('forma_tsb')}")
+    linhas.append(f"Tendência fitness: {cond.get('tendencia_fitness')}")
+    linhas.append(f"VO2max: {cond.get('vo2max')}")
+    linhas.append(f"FTP: {cond.get('ftp')}")
+    linhas.append(f"FTP W/kg: {cond.get('ftp_wkg')}")
+    linhas.append("")
+
+    linhas.append("3. RECUPERAÇÃO / WELLNESS")
+    linhas.append(f"HRV médio: {rec.get('hrv_medio')}")
+    linhas.append(f"RHR médio: {rec.get('rhr_medio')}")
+    linhas.append(f"Sono médio: {rec.get('sono_medio_h')} h")
+    linhas.append(f"Sleep score médio: {rec.get('sono_score_medio')}")
+    linhas.append(f"Readiness médio: {rec.get('readiness_medio')}")
+    linhas.append(f"Peso médio: {rec.get('peso_medio')}")
+    linhas.append(f"Passos médios: {rec.get('passos_medio')}")
+    linhas.append(f"Stress médio: {rec.get('stress_medio')}")
+    linhas.append(f"Body Battery médio: {rec.get('body_battery_medio')}")
+    linhas.append(f"SpO2 médio: {rec.get('spo2_medio')}")
+    linhas.append("")
+
+    linhas.append("4. INDICADORES DERIVADOS")
+    linhas.append(f"ACWR: {ind.get('acwr')}")
+    linhas.append(f"Carga por dia: {ind.get('carga_por_dia')}")
+    linhas.append(f"Carga por sessão: {ind.get('carga_por_sessao')}")
+    linhas.append(f"Densidade treino: {ind.get('densidade_treino')}")
+    linhas.append(f"Dias ativos: {ind.get('dias_ativos')}")
+    linhas.append(f"Dias off: {ind.get('dias_off')}")
+    linhas.append(f"Dias ativos %: {ind.get('dias_ativos_pct')}")
+    linhas.append(f"Distribuição carga %: {json.dumps(ind.get('distribuicao_carga_pct'), ensure_ascii=False)}")
+    linhas.append(f"Alerta recuperação: {json.dumps(ind.get('alerta_recuperacao'), ensure_ascii=False)}")
+    linhas.append("")
+
+    linhas.append("5. DESTAQUES")
+    linhas.append(f"Maior treino por carga: {json.dumps(ind.get('maior_treino_carga'), ensure_ascii=False)}")
+    linhas.append(f"Maior treino por duração: {json.dumps(ind.get('maior_treino_duracao'), ensure_ascii=False)}")
+    linhas.append(f"Maior treino por distância: {json.dumps(ind.get('maior_treino_distancia'), ensure_ascii=False)}")
+    linhas.append("")
+
+    linhas.append("6. TREINOS")
+    for t in treinos:
+        linhas.append(
+            f"- {t.get('data')} | {t.get('tipo')} | "
+            f"{t.get('dist_km')} km | {t.get('dur_min')} min | "
+            f"carga {t.get('carga_treino')} | TRIMP {t.get('trimp')} | "
+            f"FC {t.get('fc_med')}/{t.get('fc_max')} | "
+            f"pace {t.get('pace_min_km')} | "
+            f"cad {t.get('cadencia')} | "
+            f"pot {t.get('potencia_w')} | "
+            f"FTP {t.get('ftp')} | "
+            f"LTHR {t.get('lthr')} | "
+            f"zonas_fc {t.get('zona_fc_tempos')}"
+        )
+
+    return "\n".join(linhas)
+
 async def relatorio_command(update, context):
     uid = update.effective_user.id
 
@@ -945,6 +1026,70 @@ Priorize conclusão sobre descrição.
     "📊 Relatório de Performance:\n\n" + resposta,
     reply_markup=marcadores_feedback("relatorio")
     )
+
+async def metricas_command(update, context):
+    dias = 7
+    inicio = None
+    fim = None
+
+    args = context.args
+
+    if args:
+        texto_args = (
+            " ".join(args)
+            .replace(" até ", " ")
+            .replace(" a ", " ")
+            .replace("-", " ")
+        )
+
+        partes = [p.strip() for p in texto_args.split() if p.strip()]
+        datas = []
+
+        for p in partes:
+            try:
+                normalizar_data_br(p)
+                datas.append(p)
+            except ValueError:
+                pass
+
+        if len(datas) >= 2:
+            inicio = datas[0]
+            fim = datas[1]
+        else:
+            try:
+                dias = int(args[0])
+            except ValueError:
+                await context.bot.send_message(
+                    update.effective_chat.id,
+                    "Formato inválido. Use:\n/metricas 7\nou\n/metricas 25/05/26 31/05/26"
+                )
+                return
+
+    msg_status = (
+        f"📊 Coletando métricas de {inicio} a {fim}..."
+        if inicio and fim
+        else f"📊 Coletando métricas dos últimos {dias} dias..."
+    )
+
+    await context.bot.send_message(update.effective_chat.id, msg_status)
+
+    try:
+        d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
+    except Exception as e:
+        print("Erro metricas:", e)
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "⚠️ Falha ao coletar métricas do Intervals.icu."
+        )
+        return
+
+    texto = formatar_metricas(d)
+
+    await enviar_texto_longo(
+        context,
+        update.effective_chat.id,
+        texto
+    )
     
 # =============================================================================
 # COMANDOS
@@ -1038,6 +1183,7 @@ async def comandos(update, context):
         "/start — iniciar\n"
         "/relatorio <dias> — relatório de performance\n"
         "/relatorio <xx/xx/xx xx/xx/xx> — relatório por período\n"
+        "/metricas <dias ou período> — envia apenas métricas brutas, sem análise\n"
         "/processar_arquivo <instrução> — processar último arquivo pendente\n"
         "/custos — uso e custo estimado do mês\n"
         "/comandos — mostrar menu"
@@ -1492,6 +1638,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("comandos", comandos))
     app.add_handler(CommandHandler("relatorio", relatorio_command))
+    app.add_handler(CommandHandler("metricas", metricas_command))
     app.add_handler(CommandHandler("processar_arquivo", processar_ultimo_arquivo_cmd))
     app.add_handler(CommandHandler("custos", custos_command))
 
