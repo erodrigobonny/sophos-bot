@@ -1181,7 +1181,7 @@ Priorize conclusão sobre descrição.
             {"role": "system", "content": ESTILO_SOPHOS},
             {"role": "user", "content": prompt}
         ],
-        model=MODEL_INT,
+        model=MODEL_FAST,
         max_tokens=1500,
         user_id=uid
     )
