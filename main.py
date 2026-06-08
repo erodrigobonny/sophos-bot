@@ -700,11 +700,12 @@ for a in ativ:
     wel_resp.raise_for_status()
     wel = wel_resp.json()
 
-    print("\n===== WELLNESS SAMPLE =====")
-    print(json.dumps(wel[0], indent=2, ensure_ascii=False))
-
     if isinstance(wel, dict):
         wel = list(wel.values())
+
+    print("\n===== WELLNESS SAMPLE =====")
+    if wel:
+        print(json.dumps(wel[-1], indent=2, ensure_ascii=False))
 
     wel_filtrado = []
     wel.sort(key=lambda w: str(w.get("id") or w.get("date") or w.get("day") or ""))
