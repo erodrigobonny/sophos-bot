@@ -932,7 +932,7 @@ Priorize conclusão sobre descrição.
             {"role": "system", "content": ESTILO_SOPHOS},
             {"role": "user", "content": prompt}
         ],
-        model=MODEL_MAIN,
+        model=MODEL_FAST,
         max_tokens=1500,
         user_id=uid
     )
@@ -1117,16 +1117,16 @@ def escolher_modelo(texto: str) -> str:
         "compare", "comparar",
         "estratégia", "decisão", "risco",
         "investimento", "contrato", "carreira",
-        "relatório", "treino", "suplemento",
+        "relatório", "suplemento",
         "código", "corrija", "erro", "bug",
-        "projeto", "planejamento", "sophos",
-        "jurídico", "financeiro", "performance"
+        "projeto", "planejamento",
+        "jurídico", "financeiro",
     ]
 
     if any(g in t for g in gatilhos_complexos):
         return MODEL_MAIN
 
-    if len(t) < 120:
+    if len(t) < 300:
         return MODEL_FAST
 
     return MODEL_MAIN
