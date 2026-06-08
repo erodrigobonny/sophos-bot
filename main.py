@@ -612,18 +612,18 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     ativ_resp.raise_for_status()
     ativ = ativ_resp.json()
 
-    print("\n===== ACTIVITY SAMPLE =====")
-    print(json.dumps(ativ[0], indent=2, ensure_ascii=False))
-
-for a in ativ:
-    if a.get("type") in ["Swim", "OpenWaterSwim"]:
-        print("===== SWIM SAMPLE =====")
-        print(json.dumps(a, indent=2, ensure_ascii=False))
-        break
-    
-
     if isinstance(ativ, dict):
         ativ = list(ativ.values())
+
+    print("\n===== ACTIVITY SAMPLE =====")
+    if ativ:
+        print(json.dumps(ativ[0], indent=2, ensure_ascii=False))
+
+    for a in ativ:
+        if a.get("type") in ["Swim", "OpenWaterSwim"]:
+            print("\n===== SWIM SAMPLE =====")
+            print(json.dumps(a, indent=2, ensure_ascii=False))
+            break
 
     treinos = []
 
@@ -765,7 +765,6 @@ for a in ativ:
         "body_battery_medio": media("bodyBattery"),
         "spo2_medio": media("spO2")
     }
-
 
     resultado = {
         "periodo": f"{inicio.isoformat()} a {fim.isoformat()}",
