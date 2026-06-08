@@ -161,15 +161,18 @@ def remover_acentos(texto: str) -> str:
 
 def dividir_texto(texto: str, limite: int = MAX_TELEGRAM_CHARS):
     partes = []
-
     texto = texto or ""
 
     while len(texto) > limite:
         corte = texto.rfind("\n", 0, limite)
-        if corte == -1:
+
+        if corte == -1 or corte < 1000:
             corte = limite
 
-        partes.append(texto[:corte].strip())
+        parte = texto[:corte].strip()
+        if parte:
+            partes.append(parte)
+
         texto = texto[corte:].strip()
 
     if texto:
@@ -1313,7 +1316,7 @@ async def custos_command(update, context):
         "gpt-5": {"input": 1.25, "output": 10.00},
         "gpt-5-mini": {"input": 0.25, "output": 2.00},
         "gpt-5.4": {"input": 2.50, "output": 15.00},
-        "gpt-5.4-mini": {"input": 0.75, "output": 3.00}
+        "gpt-5.4-mini": {"input": 0.75, "output": 4.50}
     }
 
     custo_total = 0.0
