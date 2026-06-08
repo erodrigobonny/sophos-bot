@@ -779,12 +779,149 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
 
     return resultado
 
+
+#--------------- METRICAS--------------------#
+def valor(v, sufixo=""):
+    if v is None:
+        return "sem dado"
+    return f"{v}{sufixo}"
+
+
+def data_curta(data):
+    if not data:
+        return "-"
+    try:
+        return datetime.fromisoformat(data).strftime("%d/%m")
+    except Exception:
+        return data
+
+
+def tipo_label(tipo):
+    t = (tipo or "").lower()
+
+    if "swim" in t:
+        return "🏊 Natação"
+    if "ride" in t or "bike" in t:
+        return "🚴 Bike"
+    if "run" in t:
+        return "🏃 Corrida"
+    if "weight" in t or "strength" in t:
+        return "🏋️ Força"
+
+    return "📌 Outros"
+
+
+def treino_linha(t):
+    partes = []
+
+    partes.append(f"{data_curta(t.get('data'))} — {t.get('nome') or t.get('tipo')}")
+
+    if t.get("dist_km") and t.get("dist_km") > 0:
+        partes.append(f"{t.get('dist_km')} km")
+
+    if t.get("dur_min"):
+        partes.append(f"{t.get('dur_min')} min")
+
+    if t.get("carga_treino") is not None:
+        partes.append(f"carga {t.get('carga_treino')}")
+
+    if t.get("trimp") is not None:
+        partes.append(f"TRIMP {round(t.get('trimp'), 1)}")
+
+    if t.get("fc_med") is not None or t.get("fc_max") is not None:
+        partes.append(f"FC {valor(t.get('fc_med'))}/{valor(t.get('fc_max'))}")
+
+    if t.get("pace_min_km") is not None:
+        partes.append(f"pace {t.get('pace_min_km')}")
+
+    if t.get("cadencia") is not None:
+        partes.append(f"cad {round(t.get('cadencia'), 1)}")
+
+    if t.get("ftp") is not None:
+        partes.append(f"FTP {t.get('ftp')}W")
+
+    if t.get("lthr") is not None:
+        partes.append(f"LTHR {t.get('lthr')}")
+
+    return " • ".join(partes)
+
+
+def formatar_treino_destaque(t):
+    if not t:
+        return "sem dado"
+
+    linhas = []
+    linhas.append(f"{tipo_label(t.get('tipo'))}")
+    linhas.append(f"Data: {data_curta(t.get('data'))}")
+    linhas.append(f"Treino: {t.get('nome') or '-'}")
+
+    if t.get("dist_km") is not None:
+        linhas.append(f"Distância: {t.get('dist_km')} km")
+
+    if t.get("dur_min") is not None:
+        linhas.append(f"Duração: {t.get('dur_min')} min")
+
+    if t.get("carga") is not None:
+        linhas.append(f"Carga: {t.get('carga')}")
+
+    if t.get("fc_med") is not None:
+        linhas.append(f"FC média: {t.get('fc_med')}")
+
+    return "\n".join(linhas)
+
+
+def formatar_distribuicao(distrib):
+    if not distrib:
+        return "sem dado"
+
+    ordem = sorted(distrib.items(), key=lambda x: x[1], reverse=True)
+
+    nomes = {
+        "corrida": "Corrida",
+        "natacao": "Natação",
+        "bike": "Bike",
+        "forca": "Força",
+        "outros": "Outros"
+    }
+
+    return "\n".join(
+        f"• {nomes.get(k, k.title())}: {v}%"
+        for k, v in ordem
+    )
+
+
+def formatar_alerta(alerta):
+    if not alerta:
+        return "sem dado"
+
+    nivel = alerta.get("nivel", "sem dado")
+    sinais = alerta.get("sinais") or []
+
+    linhas = []
+    linhas.append(f"Nível: {nivel}")
+
+    if sinais:
+        linhas.append("Sinais:")
+        for s in sinais:
+            linhas.append(f"• {s}")
+    else:
+        linhas.append("Sinais: nenhum")
+
+    obs = alerta.get("observacao")
+    if obs:
+        linhas.append(f"Obs: {obs}")
+
+    return "\n".join(linhas)
+
+
 def formatar_metricas(d):
     totais = d.get("totais", {})
     cond = d.get("condicionamento", {})
     rec = d.get("recuperacao", {})
     ind = d.get("indicadores", {})
     treinos = d.get("treinos", [])
+
+    ftp_treino = next((t.get("ftp") for t in treinos if t.get("ftp")), None)
 
     linhas = []
 
@@ -794,71 +931,91 @@ def formatar_metricas(d):
     linhas.append("")
 
     linhas.append("1. TOTAIS")
-    linhas.append(f"Sessões: {totais.get('total_sessoes')}")
-    linhas.append(f"Carga total: {totais.get('carga_total')}")
-    linhas.append(f"Calorias: {totais.get('calorias')}")
-    linhas.append(f"Natação: {totais.get('natacao_m')} m")
-    linhas.append(f"Bike: {totais.get('bike_km')} km")
-    linhas.append(f"Corrida: {totais.get('corrida_km')} km")
+    linhas.append(f"Sessões: {valor(totais.get('total_sessoes'))}")
+    linhas.append(f"Carga total: {valor(totais.get('carga_total'))}")
+    linhas.append(f"Calorias: {valor(totais.get('calorias'))}")
+    linhas.append(f"Natação: {valor(totais.get('natacao_m'), ' m')}")
+    linhas.append(f"Bike: {valor(totais.get('bike_km'), ' km')}")
+    linhas.append(f"Corrida: {valor(totais.get('corrida_km'), ' km')}")
     linhas.append("")
 
     linhas.append("2. CONDICIONAMENTO")
-    linhas.append(f"CTL / Fitness: {cond.get('fitness_ctl')}")
-    linhas.append(f"ATL / Fadiga: {cond.get('fadiga_atl')}")
-    linhas.append(f"TSB / Forma: {cond.get('forma_tsb')}")
-    linhas.append(f"Tendência fitness: {cond.get('tendencia_fitness')}")
-    linhas.append(f"VO2max: {cond.get('vo2max')}")
-    linhas.append(f"FTP: {cond.get('ftp')}")
-    linhas.append(f"FTP W/kg: {cond.get('ftp_wkg')}")
+    linhas.append(f"CTL / Fitness: {valor(cond.get('fitness_ctl'))}")
+    linhas.append(f"ATL / Fadiga: {valor(cond.get('fadiga_atl'))}")
+    linhas.append(f"TSB / Forma: {valor(cond.get('forma_tsb'))}")
+    linhas.append(f"Tendência fitness: {valor(cond.get('tendencia_fitness'))}")
+    linhas.append(f"VO2max: {valor(cond.get('vo2max'))}")
+    linhas.append(f"FTP bike: {valor(cond.get('ftp') or ftp_treino, ' W')}")
+    linhas.append(f"eFTP: {valor(cond.get('eftp'), ' W')}")
+    linhas.append(f"W': {valor(cond.get('wprime'))}")
+    linhas.append(f"Pmax: {valor(cond.get('pmax'), ' W')}")
     linhas.append("")
 
     linhas.append("3. RECUPERAÇÃO / WELLNESS")
-    linhas.append(f"HRV médio: {rec.get('hrv_medio')}")
-    linhas.append(f"RHR médio: {rec.get('rhr_medio')}")
-    linhas.append(f"Sono médio: {rec.get('sono_medio_h')} h")
-    linhas.append(f"Sleep score médio: {rec.get('sono_score_medio')}")
-    linhas.append(f"Readiness médio: {rec.get('readiness_medio')}")
-    linhas.append(f"Peso médio: {rec.get('peso_medio')}")
-    linhas.append(f"Passos médios: {rec.get('passos_medio')}")
-    linhas.append(f"Stress médio: {rec.get('stress_medio')}")
-    linhas.append(f"Body Battery médio: {rec.get('body_battery_medio')}")
-    linhas.append(f"SpO2 médio: {rec.get('spo2_medio')}")
+    linhas.append(f"HRV médio: {valor(rec.get('hrv_medio'))}")
+    linhas.append(f"RHR médio: {valor(rec.get('rhr_medio'))}")
+    linhas.append(f"Sono médio: {valor(rec.get('sono_medio_h'), ' h')}")
+    linhas.append(f"Sleep score médio: {valor(rec.get('sono_score_medio'))}")
+    linhas.append(f"Readiness médio: {valor(rec.get('readiness_medio'))}")
+    linhas.append(f"Peso médio: {valor(rec.get('peso_medio'), ' kg')}")
+    linhas.append(f"Passos médios: {valor(rec.get('passos_medio'))}")
+    linhas.append(f"Stress médio: {valor(rec.get('stress_medio'))}")
+    linhas.append(f"Body Battery médio: {valor(rec.get('body_battery_medio'))}")
+    linhas.append(f"SpO2 médio: {valor(rec.get('spo2_medio'))}")
     linhas.append("")
 
     linhas.append("4. INDICADORES DERIVADOS")
-    linhas.append(f"ACWR: {ind.get('acwr')}")
-    linhas.append(f"Carga por dia: {ind.get('carga_por_dia')}")
-    linhas.append(f"Carga por sessão: {ind.get('carga_por_sessao')}")
-    linhas.append(f"Densidade treino: {ind.get('densidade_treino')}")
-    linhas.append(f"Dias ativos: {ind.get('dias_ativos')}")
-    linhas.append(f"Dias off: {ind.get('dias_off')}")
-    linhas.append(f"Dias ativos %: {ind.get('dias_ativos_pct')}")
-    linhas.append(f"Distribuição carga %: {json.dumps(ind.get('distribuicao_carga_pct'), ensure_ascii=False)}")
-    linhas.append(f"Alerta recuperação: {json.dumps(ind.get('alerta_recuperacao'), ensure_ascii=False)}")
+    linhas.append(f"ACWR: {valor(ind.get('acwr'))}")
+    linhas.append(f"Carga por dia: {valor(ind.get('carga_por_dia'))}")
+    linhas.append(f"Carga por sessão: {valor(ind.get('carga_por_sessao'))}")
+    linhas.append(f"Densidade treino: {valor(ind.get('densidade_treino'), ' sessão/dia')}")
+    linhas.append(f"Dias ativos: {valor(ind.get('dias_ativos'))}")
+    linhas.append(f"Dias off: {valor(ind.get('dias_off'))}")
+    linhas.append(f"Dias ativos %: {valor(ind.get('dias_ativos_pct'), '%')}")
+    linhas.append("")
+    linhas.append("Distribuição da carga:")
+    linhas.append(formatar_distribuicao(ind.get("distribuicao_carga_pct")))
+    linhas.append("")
+    linhas.append("Alerta de recuperação:")
+    linhas.append(formatar_alerta(ind.get("alerta_recuperacao")))
     linhas.append("")
 
     linhas.append("5. DESTAQUES")
-    linhas.append(f"Maior treino por carga: {json.dumps(ind.get('maior_treino_carga'), ensure_ascii=False)}")
-    linhas.append(f"Maior treino por duração: {json.dumps(ind.get('maior_treino_duracao'), ensure_ascii=False)}")
-    linhas.append(f"Maior treino por distância: {json.dumps(ind.get('maior_treino_distancia'), ensure_ascii=False)}")
+    linhas.append("Maior treino por carga:")
+    linhas.append(formatar_treino_destaque(ind.get("maior_treino_carga")))
+    linhas.append("")
+    linhas.append("Maior treino por duração:")
+    linhas.append(formatar_treino_destaque(ind.get("maior_treino_duracao")))
+    linhas.append("")
+    linhas.append("Maior treino por distância:")
+    linhas.append(formatar_treino_destaque(ind.get("maior_treino_distancia")))
     linhas.append("")
 
-    linhas.append("6. TREINOS")
+    linhas.append("6. TREINOS POR MODALIDADE")
+
+    grupos = {
+        "🏊 Natação": [],
+        "🚴 Bike": [],
+        "🏃 Corrida": [],
+        "🏋️ Força": [],
+        "📌 Outros": []
+    }
+
     for t in treinos:
-        linhas.append(
-            f"- {t.get('data')} | {t.get('tipo')} | "
-            f"{t.get('dist_km')} km | {t.get('dur_min')} min | "
-            f"carga {t.get('carga_treino')} | TRIMP {t.get('trimp')} | "
-            f"FC {t.get('fc_med')}/{t.get('fc_max')} | "
-            f"pace {t.get('pace_min_km')} | "
-            f"cad {t.get('cadencia')} | "
-            f"pot {t.get('potencia_w')} | "
-            f"FTP {t.get('ftp')} | "
-            f"LTHR {t.get('lthr')} | "
-            f"zonas_fc {t.get('zona_fc_tempos')}"
-        )
+        grupos[tipo_label(t.get("tipo"))].append(t)
+
+    for grupo, lista in grupos.items():
+        if not lista:
+            continue
+
+        linhas.append("")
+        linhas.append(grupo)
+
+        for t in lista:
+            linhas.append(f"• {treino_linha(t)}")
 
     return "\n".join(linhas)
+#------------------------------------------------------------------
 
 async def relatorio_command(update, context):
     uid = update.effective_user.id
