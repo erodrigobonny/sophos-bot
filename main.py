@@ -58,7 +58,7 @@ MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST")
 MODEL_EMBED = "text-embedding-3-small"
 
 MAX_DOC_CHARS = 9000
-MAX_TELEGRAM_CHARS = 5000
+MAX_TELEGRAM_CHARS = 3800
 
 GATILHOS_MEMORIA = [
     "lembre", "guarde", "salve", "registre",
@@ -188,7 +188,7 @@ async def enviar_texto_longo(context, chat_id, texto, reply_markup=None):
             reply_markup=markup
         )
 
-def chamar_gpt_sync(messages, model=MODEL_MAIN, max_tokens=None, user_id=None):
+def chamar_gpt_sync(messages, model=MODEL_FAST, max_tokens=None, user_id=None):
     kwargs = {
         "model": model,
         "messages": messages,
@@ -1076,7 +1076,7 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 4500 caracteres, 
+Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 3700 caracteres, 
 incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
 Analise meus dados do período {d['periodo']}.
 
@@ -1152,7 +1152,7 @@ Não utilize termos diagnósticos.
 — ajuste prático para a próxima semana
 
 IMPORTANTE:
-A resposta deve ter no máximo 4500 caracteres.
+A resposta deve ter no máximo 3700 caracteres.
 Remova:
 - repetições
 - explicações redundantes
