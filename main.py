@@ -612,8 +612,15 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     ativ_resp.raise_for_status()
     ativ = ativ_resp.json()
 
-    ##print("\n===== ACTIVITY SAMPLE =====")
-    ##print(json.dumps(ativ[0], indent=2, ensure_ascii=False))
+    print("\n===== ACTIVITY SAMPLE =====")
+    print(json.dumps(ativ[0], indent=2, ensure_ascii=False))
+
+for a in ativ:
+    if a.get("type") in ["Swim", "OpenWaterSwim"]:
+        print("===== SWIM SAMPLE =====")
+        print(json.dumps(a, indent=2, ensure_ascii=False))
+        break
+    
 
     if isinstance(ativ, dict):
         ativ = list(ativ.values())
@@ -693,8 +700,8 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     wel_resp.raise_for_status()
     wel = wel_resp.json()
 
-    ##print("\n===== WELLNESS SAMPLE =====")
-    ##print(json.dumps(wel[0], indent=2, ensure_ascii=False))
+    print("\n===== WELLNESS SAMPLE =====")
+    print(json.dumps(wel[0], indent=2, ensure_ascii=False))
 
     if isinstance(wel, dict):
         wel = list(wel.values())
