@@ -615,15 +615,15 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     if isinstance(ativ, dict):
         ativ = list(ativ.values())
 
-    print("\n===== ACTIVITY SAMPLE =====")
-    if ativ:
-        print(json.dumps(ativ[0], indent=2, ensure_ascii=False))
+    ##print("\n===== ACTIVITY SAMPLE =====")
+    ##if ativ:
+    ##    print(json.dumps(ativ[0], indent=2, ensure_ascii=False))
 
-    for a in ativ:
-        if a.get("type") in ["Swim", "OpenWaterSwim"]:
-            print("\n===== SWIM SAMPLE =====")
-            print(json.dumps(a, indent=2, ensure_ascii=False))
-            break
+    ##for a in ativ:
+    ##    if a.get("type") in ["Swim", "OpenWaterSwim"]:
+    ##        print("\n===== SWIM SAMPLE =====")
+    ##        print(json.dumps(a, indent=2, ensure_ascii=False))
+    ##        break
 
     treinos = []
 
@@ -703,9 +703,9 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     if isinstance(wel, dict):
         wel = list(wel.values())
 
-    print("\n===== WELLNESS SAMPLE =====")
-    if wel:
-        print(json.dumps(wel[-1], indent=2, ensure_ascii=False))
+    ##print("\n===== WELLNESS SAMPLE =====")
+    ##if wel:
+    ##    print(json.dumps(wel[-1], indent=2, ensure_ascii=False))
 
     wel_filtrado = []
     wel.sort(key=lambda w: str(w.get("id") or w.get("date") or w.get("day") or ""))
