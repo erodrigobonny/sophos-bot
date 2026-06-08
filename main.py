@@ -885,7 +885,8 @@ Estruture a resposta assim:
 — padrões que se repetem
 
 🧠 CONDICIONAMENTO
-— leitura de fitness (CTL), fadiga (ATL),  forma (TSB), VO2MAX, Body Battery, Disposição e relação carga aguda/crônica (ACWR) em linguagem simples.
+— Analise obrigatoriamente: leitura de fitness (CTL), fadiga (ATL),  forma (TSB), VO2MAX, Body Battery, Disposição, carga_por_dia, carga_por_sessao, densidade_treino, dias_ativos_pct, 
+maior_treino_carga, maior_treino_duracao, maior_treino_distancia, alerta_recuperacao, relação carga aguda/crônica (ACWR) em linguagem simples.
 Explique:
 - nível atual
 - tendência
