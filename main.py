@@ -55,6 +55,7 @@ SUMMARY_KEY = "resumo_anterior"
 
 MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN")
 MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST")
+MODEL_INT = os.environ.get("OPENAI_MODEL_INT")
 MODEL_EMBED = "text-embedding-3-small"
 
 MAX_DOC_CHARS = 9000
@@ -1180,7 +1181,7 @@ Priorize conclusão sobre descrição.
             {"role": "system", "content": ESTILO_SOPHOS},
             {"role": "user", "content": prompt}
         ],
-        model=MODEL_FAST,
+        model=MODEL_INT,
         max_tokens=1500,
         user_id=uid
     )
