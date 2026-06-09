@@ -772,7 +772,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "cadencia": a.get("average_cadence"),
             "carga_treino": a.get("icu_training_load"),
             "intensidade": a.get("icu_intensity"),
-            "trimp": round(t.get("trimp"), 1) if t.get("trimp") is not None else None,
+            "trimp": round(a.get("trimp"), 1) if a.get("trimp") is not None else None,
             "cal": a.get("calories"),
             
             "ftp": a.get("icu_ftp") or a.get("icu_pm_ftp") or a.get("icu_rolling_ftp"),
@@ -1292,101 +1292,56 @@ async def relatorio_command(update, context):
         return
 
     prompt = f"""
-Você é coach de endurance e cientista de dados de performance. Não utilize: ** -- ## Markdown, utilize apenas texto puro, ajuste o relatório para no máximo 3700 caracteres, 
-incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres invisiveis. 
-Analise meus dados do período {d['periodo']}.
+Você é coach de endurance e cientista de dados de performance.
 
-DADOS COMPLETOS:
+Analise os dados do período {d['periodo']}.
+
+DADOS:
 {json.dumps(preparar_dados_relatorio(d), ensure_ascii=False, default=str)}
 
-Contexto técnico das métricas:
-- fitness_ctl = condicionamento crônico (quanto maior, mais fit)
-- fadiga_atl = fadiga aguda recente
-- forma_tsb = forma (CTL menos ATL; positivo = descansado, negativo = sobrecarregado)
-- carga_treino = training load por sessão
-- potencia_w = potência média da sessão quando disponível
-- cadencia = cadência média da sessão quando disponível
-- ftp = potência funcional de limiar, quando disponível
-- stress_medio = nível de stress
-- readiness_medio = disposição
-- body_battery_medio = batéria do corpo
+REGRAS:
+- Texto puro. Sem Markdown (**, --, ##).
+- Máximo 3700 caracteres.
+- Use os indicadores já calculados. Não recalcule.
+- Não invente dado ausente.
+- Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
+- Se alerta_recuperacao vier moderado/alto, recomende reduzir intensidade e priorizar sono.
+- Priorize conclusão sobre descrição. Cada insight aparece uma vez.
 
-- vo2max = estimativa de capacidade aeróbia
-Quando disponível:
-- informe valor atual
-- informe tendência (subindo, estável ou caindo)
-- relacione com CTL, ATL e TSB
+INTERPRETAÇÕES FIXAS:
+ACWR < 0.8 = subestímulo | 0.8-1.3 = controlado | 1.3-1.5 = atenção | >1.5 = risco de lesão
+TSB positivo = descansado | negativo = carregado
+CTL subindo = ganho de base | caindo = perda de tração
+Monotonia/strain altos = risco de fadiga acumulada
 
-INDICADORES JÁ CALCULADOS (use os valores prontos, NÃO recalcule):
-- acwr = relação carga aguda/crônica:
-  < 0.8 = subestímulo / baixa carga aguda
-  0.8 a 1.3 = zona controlada
-  1.3 a 1.5 = atenção
-  > 1.5 = risco aumentado de lesão
-- carga_por_dia = carga total dividida pelos dias do período
-- carga_por_sessao = carga total dividida pelo número de sessões
-- densidade_treino = sessões por dia
-- dias_ativos_pct = percentual de dias com treino
-- distribuicao_carga_pct = percentual da carga por modalidade
-- maior_treino_carga, maior_treino_duracao, maior_treino_distancia = destaques do período
-- alerta_recuperacao = sinal indireto de baixa recuperação/imunidade, não diagnóstico médico
-
-Use os números do campo "indicadores" exatamente como vieram.
-Não recalcule indicadores.
-Interprete combinações de sono baixo, HRV baixo, RHR elevado e carga aguda elevada.
-Se alerta_recuperacao vier moderado ou alto, recomende reduzir intensidade, priorizar sono e observar sintomas.
-Não afirme doença; fale em maior risco de baixa recuperação.
-
-Estruture a resposta assim:
+MÉTRICAS A CORRELACIONAR (use todas disponíveis):
+CTL, ATL, TSB, ACWR, monotonia, strain, carga_por_dia, carga_por_sessao, densidade_treino,
+dias_ativos_pct, distribuição de carga, maior_treino_carga/duracao/distancia,
+HRV/tendência HRV, RHR/tendência RHR, sono/tendência sono, readiness, body battery,
+stress, VO2max, FTP/eFTP, razão carga corrida/bike, percentual sessões alta intensidade,
+potência, cadência, TRIMP, pace_100m, DPS e SWOLF de natação.
 
 📊 RESUMO DO PERÍODO
-— volume por modalidade, carga total, sessões, zonas de treinos, destaque potência, cadência e FTP quando houver dados relevantes
+Volume por modalidade, carga total, sessões, distribuição e destaques.
 
 🔗 CORRELAÇÕES
-— relação entre sono, HRV, RHR, carga aguda, disposição, batéria do corpo, nível de stress e qualidade dos treinos
-— padrões que se repetem
+Conecte recuperação, carga e qualidade dos treinos. Identifique padrões.
 
 🧠 CONDICIONAMENTO
-— Analise obrigatoriamente: leitura de fitness (CTL), fadiga (ATL),  forma (TSB), VO2MAX, Body Battery, Disposição, carga_por_dia, carga_por_sessao, densidade_treino, dias_ativos_pct, 
-maior_treino_carga, maior_treino_duracao, maior_treino_distancia, alerta_recuperacao, relação carga aguda/crônica (ACWR), monotonia, strain, tendência HRV, tendência sono, tendência RHR,
-FTP vs eFTP, razão carga corrida/bike, percentual de sessões de alta intensidade, métricas estimadas de natação: pace_100m, DPS estimado e SWOLF estimado em linguagem simples.
-Explique:
-- nível atual
-- tendência
-- impacto na performance
-- risco de lesão
+Para cada métrica disponível em DADOS (CTL, ATL, TSB, ACWR, VO2max, FTP/eFTP,
+monotonia, strain, tendências de HRV/sono/RHR, métricas de natação):
+nível atual, tendência, impacto na performance e risco de lesão.
 
 📈 TENDÊNCIAS
-- O que está melhorando
-- O que está piorando
-- O principal gargalo atual
+O que melhorou, piorou e principal gargalo.
 
 ⚠️ PONTO DE ATENÇÃO
-— maior risco (overtraining/subtreino) ou oportunidade. Risco de recuperação comprometida e maior vulnerabilidade fisiológica.
-Não utilize termos diagnósticos.
+Maior risco ou oportunidade. Sem termos diagnósticos.
 
 🎯 RECOMENDAÇÃO
-— ajuste prático para a próxima semana
+Ajuste prático para a próxima semana.
 
-IMPORTANTE:
-A resposta deve ter no máximo 3700 caracteres.
-Remova:
-- repetições
-- explicações redundantes
-- frases motivacionais
-- contextualizações longas
-Se duas frases transmitirem a mesma informação, mantenha apenas a mais objetiva.
-Utilize linguagem executiva e direta, semelhante a um dashboard de performance.
-Evite narrativas longas.
-Evite repetir conclusões em seções diferentes.
-Cada insight deve aparecer apenas uma vez.
-Priorize:
-1. Principal ponto forte
-2. Principal gargalo
-3. Principal risco
-4. Melhor ação prática
-Se houver excesso de informações, descarte as menos relevantes.
-Priorize conclusão sobre descrição.
+PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática
 """
 
     resposta = chamar_gpt_sync(
