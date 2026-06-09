@@ -566,6 +566,112 @@ def calcular_indicadores(d):
     elif len(sinais) == 2:
         alerta_recuperacao = "moderado"
 
+        # cargas diárias
+    cargas_por_dia = {}
+
+    for t in treinos:
+        data = t.get("data")
+        if not data:
+            continue
+
+        cargas_por_dia[data] = cargas_por_dia.get(data, 0) + (t.get("carga_treino") or 0)
+
+    cargas_lista = list(cargas_por_dia.values())
+
+    if len(cargas_lista) >= 2:
+        media_carga_diaria = sum(cargas_lista) / len(cargas_lista)
+        variancia = sum((x - media_carga_diaria) ** 2 for x in cargas_lista) / len(cargas_lista)
+        desvio = variancia ** 0.5
+        monotonia = round(media_carga_diaria / desvio, 2) if desvio else None
+        strain = round(media_carga_diaria * monotonia, 1) if monotonia else None
+    else:
+        monotonia = None
+        strain = None
+
+        natacoes = [
+        t for t in treinos
+        if "swim" in (t.get("tipo") or "").lower()
+        and (t.get("dist_km") or 0) > 0
+        and (t.get("dur_min") or 0) > 0
+    ]
+
+    metricas_natacao = []
+
+    for t in natacoes:
+        dist_m = (t.get("dist_km") or 0) * 1000
+        dur_min = t.get("dur_min") or 0
+        cad = t.get("cadencia")
+
+        pace_100m = round(dur_min / (dist_m / 100), 2) if dist_m else None
+
+        dps_estimado = None
+        swolf_estimado = None
+
+        if cad and dur_min and dist_m:
+            total_braçadas = cad * dur_min
+            dps_estimado = round(dist_m / total_braçadas, 2) if total_braçadas else None
+
+            comprimentos = t.get("comprimentos")
+            if comprimentos:
+                seg_por_piscina = (dur_min * 60) / comprimentos
+                bracadas_por_piscina = total_braçadas / comprimentos
+                swolf_estimado = round(seg_por_piscina + bracadas_por_piscina, 1)
+
+        metricas_natacao.append({
+            "data": t.get("data"),
+            "tipo": t.get("tipo"),
+            "dist_m": round(dist_m),
+            "dur_min": dur_min,
+            "pace_100m_min": pace_100m,
+            "cadencia": round(cad, 1) if cad else None,
+            "dps_estimado": dps_estimado,
+            "swolf_estimado": swolf_estimado,
+        })
+
+    ftps_treino = [t.get("ftp") for t in treinos if t.get("ftp")]
+    ftp_bike_detectado = ftps_treino[-1] if ftps_treino else None
+
+    eftp = cond.get("eftp")
+
+    diferenca_ftp_eftp = None
+    if ftp_bike_detectado and eftp:
+        diferenca_ftp_eftp = round(ftp_bike_detectado - eftp, 1)
+
+    carga_corrida = carga_por_modalidade.get("corrida", 0)
+    carga_bike = carga_por_modalidade.get("bike", 0)
+
+    razao_corrida_bike = round(carga_corrida / carga_bike, 2) if carga_bike else None
+
+    sessoes_alta_intensidade = [
+        t for t in treinos
+        if (t.get("intensidade") or 0) >= 90
+    ]
+
+    percentual_intensidade_alta = round(
+        (len(sessoes_alta_intensidade) / len(treinos)) * 100,
+        1
+    ) if treinos else 0
+
+    maior_carga_por_modalidade = {}
+
+    for grupo in carga_por_modalidade:
+        treinos_grupo = []
+
+        for t in treinos:
+            tipo = (t.get("tipo") or "").lower()
+
+            if grupo == "corrida" and "run" in tipo:
+                treinos_grupo.append(t)
+            elif grupo == "bike" and ("ride" in tipo or "bike" in tipo):
+                treinos_grupo.append(t)
+            elif grupo == "natacao" and "swim" in tipo:
+                treinos_grupo.append(t)
+            elif grupo == "forca" and ("strength" in tipo or "weight" in tipo):
+                treinos_grupo.append(t)
+
+        maior = max(treinos_grupo, key=lambda x: x.get("carga_treino") or 0, default=None)
+        maior_carga_por_modalidade[grupo] = treino_resumo(maior)
+
     return {
         "acwr": acwr,
         "carga_por_dia": carga_por_dia,
@@ -578,6 +684,15 @@ def calcular_indicadores(d):
         "maior_treino_carga": treino_resumo(maior_carga),
         "maior_treino_duracao": treino_resumo(maior_duracao),
         "maior_treino_distancia": treino_resumo(maior_distancia),
+        "monotonia_carga": monotonia,
+        "strain": strain,
+        "metricas_natacao": metricas_natacao,
+        "ftp_bike_detectado": ftp_bike_detectado,
+        "eftp_intervals": eftp,
+        "diferenca_ftp_eftp": diferenca_ftp_eftp,
+        "razao_carga_corrida_bike": razao_corrida_bike,
+        "percentual_sessoes_alta_intensidade": percentual_intensidade_alta,
+        "maior_carga_por_modalidade": maior_carga_por_modalidade,
         "alerta_recuperacao": {
             "nivel": alerta_recuperacao,
             "sinais": sinais,
@@ -672,6 +787,8 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "stride_m": a.get("average_stride"),
             "eficiencia": a.get("icu_efficiency_factor"),
             "decoupling": a.get("decoupling"),
+            "comprimentos": a.get("lengths"),
+            "comprimento_piscina": a.get("pool_length"),
             
             
         })
@@ -744,6 +861,33 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
 
         return round(sum(vals) / len(vals), 1) if vals else None
 
+    def tendencia(campo, transform=lambda x: x):
+        vals = []
+
+        for w in wel:
+            valor = w.get(campo)
+            if valor is not None:
+                try:
+                    vals.append(transform(valor))
+                except Exception:
+                    pass
+
+        if len(vals) < 4:
+            return None
+
+        metade = len(vals) // 2
+        inicio_vals = vals[:metade]
+        fim_vals = vals[metade:]
+
+        media_inicio = sum(inicio_vals) / len(inicio_vals)
+        media_fim = sum(fim_vals) / len(fim_vals)
+
+        return {
+            "inicio": round(media_inicio, 1),
+            "fim": round(media_fim, 1),
+            "variacao": round(media_fim - media_inicio, 1)
+        }
+
     ultimo = next((w for w in reversed(wel) if w.get("ctl") is not None), {})
     primeiro = next((w for w in wel if w.get("ctl") is not None), {})
 
@@ -767,7 +911,10 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "passos_medio": media("steps"),
         "stress_medio": media("avgStress"),
         "body_battery_medio": media("bodyBattery"),
-        "spo2_medio": media("spO2")
+        "spo2_medio": media("spO2"),
+        "tendencia_hrv": tendencia("hrv"),
+        "tendencia_rhr": tendencia("restingHR"),
+        "tendencia_sono_h": tendencia("sleepSecs", lambda s: s / 3600),
     }
 
     resultado = {
