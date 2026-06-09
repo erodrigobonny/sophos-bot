@@ -56,6 +56,7 @@ SUMMARY_KEY = "resumo_anterior"
 MODEL_MAIN = os.environ.get("OPENAI_MODEL_MAIN")
 MODEL_FAST = os.environ.get("OPENAI_MODEL_FAST")
 MODEL_INT = os.environ.get("OPENAI_MODEL_INT")
+MODEL_TOP = os.environ.get("OPENAI_MODEL_TOP")
 MODEL_EMBED = "text-embedding-3-small"
 
 MAX_DOC_CHARS = 9000
@@ -1349,7 +1350,7 @@ PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática
             {"role": "system", "content": ESTILO_SOPHOS},
             {"role": "user", "content": prompt}
         ],
-        model=MODEL_INT,
+        model=MODEL_TOP,
         max_tokens=4000,
         user_id=uid
     )
