@@ -1349,7 +1349,7 @@ PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática
             {"role": "system", "content": ESTILO_SOPHOS},
             {"role": "user", "content": prompt}
         ],
-        model=MODEL_MAIN,
+        model=MODEL_INT,
         max_tokens=4000,
         user_id=uid
     )
