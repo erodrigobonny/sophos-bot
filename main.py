@@ -761,8 +761,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         treinos.append({
             "tipo": a.get("type"),
             "nome": a.get("name"),
-            "data": data_local,
-            "data_hora": a.get("start_date_local"),
+            "data": data_local,            
             "dist_km": round((a.get("distance") or 0) / 1000, 2),
             "dur_min": round((a.get("moving_time") or 0) / 60, 1),
             "fc_med": a.get("average_heartrate"),
@@ -773,7 +772,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "cadencia": a.get("average_cadence"),
             "carga_treino": a.get("icu_training_load"),
             "intensidade": a.get("icu_intensity"),
-            "trimp": a.get("trimp"),
+            "trimp": round(t.get("trimp"), 1) if t.get("trimp") is not None else None,
             "cal": a.get("calories"),
             
             "ftp": a.get("icu_ftp") or a.get("icu_pm_ftp") or a.get("icu_rolling_ftp"),
@@ -1173,6 +1172,65 @@ def formatar_metricas(d):
             linhas.append(f"• {treino_linha(t)}")
 
     return "\n".join(linhas)
+
+def limpar_vazios(obj):
+    if isinstance(obj, dict):
+        return {
+            k: limpar_vazios(v)
+            for k, v in obj.items()
+            if v is not None and v != "" and v != [] and v != {}
+        }
+
+    if isinstance(obj, list):
+        return [
+            limpar_vazios(v)
+            for v in obj
+            if v is not None and v != "" and v != [] and v != {}
+        ]
+
+    return obj
+
+
+def preparar_dados_relatorio(d):
+    treinos = d.get("treinos", [])
+    treinos_limpos = []
+
+    for t in treinos:
+        item = {
+            "tipo": t.get("tipo"),
+            "nome": t.get("nome"),
+            "data": t.get("data"),
+            "dist_km": t.get("dist_km"),
+            "dur_min": t.get("dur_min"),
+            "fc_med": t.get("fc_med"),
+            "fc_max": t.get("fc_max"),
+            "pace_min_km": t.get("pace_min_km"),
+            "potencia_w": t.get("potencia_w"),
+            "cadencia": round(t.get("cadencia"), 1) if t.get("cadencia") is not None else None,
+            "carga_treino": t.get("carga_treino"),
+            "intensidade": t.get("intensidade"),
+            "trimp": t.get("trimp"),
+            "ftp": t.get("ftp"),
+            "lthr": t.get("lthr"),
+            "hr_load": t.get("hr_load"),
+            "power_load": t.get("power_load"),
+            "comprimentos": t.get("comprimentos"),
+            "comprimento_piscina": t.get("comprimento_piscina"),
+        }
+
+        treinos_limpos.append(limpar_vazios(item))
+
+    dados = {
+        "periodo": d.get("periodo"),
+        "dias": d.get("dias"),
+        "totais": d.get("totais"),
+        "condicionamento": d.get("condicionamento"),
+        "recuperacao": d.get("recuperacao"),
+        "indicadores": d.get("indicadores"),
+        "treinos": treinos_limpos,
+    }
+
+    return limpar_vazios(dados)
 #------------------------------------------------------------------
 
 async def relatorio_command(update, context):
@@ -1239,7 +1297,7 @@ incluso quebra de linhas, botões de feedback, emojis e eventuais caracteres inv
 Analise meus dados do período {d['periodo']}.
 
 DADOS COMPLETOS:
-{json.dumps(d, ensure_ascii=False, default=str)}
+{json.dumps(preparar_dados_relatorio(d), ensure_ascii=False, default=str)}
 
 Contexto técnico das métricas:
 - fitness_ctl = condicionamento crônico (quanto maior, mais fit)
@@ -1337,7 +1395,7 @@ Priorize conclusão sobre descrição.
             {"role": "user", "content": prompt}
         ],
         model=MODEL_MAIN,
-        max_tokens=1500,
+        max_tokens=4000,
         user_id=uid
     )
 
