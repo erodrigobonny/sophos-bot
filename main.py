@@ -1,4 +1,14 @@
-# Sophos V18 - Otimizado – main.py
+# Sophos V19 - Otimizado (Fable - Alto) – main.py
+#
+# Mudanças vs V18:
+# - Fix de acentuação em escolher_modelo / deve_extrair_memoria / deve_buscar_memoria
+# - JSON compacto no /relatorio (separators sem espaços)
+# - Instruções fixas do relatório em constante (PROMPT_RELATORIO) no system
+# - Compressão de imagem (Pillow) antes do envio à API de visão
+# - "observacao" do alerta removida apenas do JSON enviado ao modelo
+# - parse_periodo_args unificado (remove duplicação relatorio/metricas)
+# Mantido (decisão conservadora): ftp/lthr/hr_load/power_load por treino,
+# destaques como dict, sem cache de relatório.
 
 import os
 import re
@@ -12,6 +22,8 @@ import base64
 from datetime import datetime, timedelta
 
 import pandas as pd
+
+from PIL import Image
 
 from openai import OpenAI
 import firebase_admin
@@ -93,6 +105,58 @@ Regras:
 IMPORTANTE:
 Não utilize: ** -- ## Markdown, utilize apenas texto puro.
 """
+
+PROMPT_RELATORIO = """Você é coach de endurance e cientista de dados de performance.
+
+REGRAS:
+- Texto puro. Sem Markdown (**, --, ##).
+- Máximo 3700 caracteres.
+- Use os indicadores já calculados. Não recalcule.
+- Não invente dado ausente.
+- Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
+- Se alerta_recuperacao vier moderado/alto, recomende reduzir intensidade e priorizar sono.
+- Priorize conclusão sobre descrição. Cada insight aparece uma vez.
+
+ESTILO:
+- Mantenha linguagem humana e agradável de ler.
+- Use os emojis das seções (📊 🔗 🧠 📈 ⚠️ 🎯).
+- Pode usar frases curtas de interpretação prática quando agregarem valor.
+
+INTERPRETAÇÕES FIXAS:
+ACWR < 0.8 = subestímulo | 0.8-1.3 = controlado | 1.3-1.5 = atenção | >1.5 = risco de lesão
+TSB positivo = descansado | negativo = carregado
+CTL subindo = ganho de base | caindo = perda de tração
+Monotonia/strain altos = risco de fadiga acumulada
+
+MÉTRICAS A CORRELACIONAR (use todas disponíveis):
+CTL, ATL, TSB, ACWR, monotonia, strain, carga_por_dia, carga_por_sessao, densidade_treino,
+dias_ativos_pct, distribuição de carga, maior_treino_carga/duracao/distancia,
+HRV/tendência HRV, RHR/tendência RHR, sono/tendência sono, readiness, body battery,
+stress, VO2max, FTP/eFTP, razão carga corrida/bike, percentual sessões alta intensidade,
+potência, cadência, TRIMP, pace_100m, DPS e SWOLF de natação.
+
+ESTRUTURA:
+📊 RESUMO DO PERÍODO
+Volume por modalidade, carga total, sessões, distribuição e destaques.
+
+🔗 CORRELAÇÕES
+Conecte recuperação, carga e qualidade dos treinos. Identifique padrões.
+
+🧠 CONDICIONAMENTO
+Para cada métrica disponível em DADOS (CTL, ATL, TSB, ACWR, VO2max, FTP/eFTP,
+monotonia, strain, tendências de HRV/sono/RHR, métricas de natação):
+nível atual, tendência, impacto na performance e risco de lesão.
+
+📈 TENDÊNCIAS
+O que melhorou, piorou e principal gargalo.
+
+⚠️ PONTO DE ATENÇÃO
+Maior risco ou oportunidade. Sem termos diagnósticos.
+
+🎯 RECOMENDAÇÃO
+Ajuste prático para a próxima semana.
+
+PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática"""
 
 # =============================================================================
 # INICIALIZAÇÃO
@@ -219,7 +283,7 @@ def chamar_gpt_sync(messages, model=MODEL_FAST, max_tokens=None, user_id=None):
             if push_ref.key and push_ref.key[-1] in ("0", "5"):
                 limpar_uso_antigo(user_id)
     except Exception as e:
-        print("Erro ao logar uso:", e)           
+        print("Erro ao logar uso:", e)
 
     return resp.choices[0].message.content or ""
 
@@ -231,12 +295,13 @@ def gerar_embedding(texto: str):
     return resp.data[0].embedding
 
 def deve_extrair_memoria(texto: str) -> bool:
-    t = texto.lower().strip()
+    # Fix V18.1: normaliza acentos antes de comparar com os gatilhos
+    t = remover_acentos(texto.lower().strip())
 
     if len(t) < 40:
         return False
 
-    return any(g in t for g in GATILHOS_MEMORIA)
+    return any(remover_acentos(g) in t for g in GATILHOS_MEMORIA)
 
 def marcadores_feedback(tipo):
     return InlineKeyboardMarkup([
@@ -245,6 +310,36 @@ def marcadores_feedback(tipo):
             InlineKeyboardButton("👎", callback_data=f"{tipo}:dislike"),
         ]
     ])
+
+def parse_periodo_args(args):
+    """Retorna (dias, inicio, fim). Levanta ValueError se formato inválido.
+    Unifica o parsing de /relatorio e /metricas (antes duplicado)."""
+    dias, inicio, fim = 7, None, None
+
+    if args:
+        texto_args = (
+            " ".join(args)
+            .replace(" até ", " ")
+            .replace(" a ", " ")
+            .replace("-", " ")
+        )
+
+        partes = [p.strip() for p in texto_args.split() if p.strip()]
+        datas = []
+
+        for p in partes:
+            try:
+                normalizar_data_br(p)
+                datas.append(p)
+            except ValueError:
+                pass
+
+        if len(datas) >= 2:
+            inicio, fim = datas[0], datas[1]
+        else:
+            dias = int(args[0])  # ValueError sobe para o chamador
+
+    return dias, inicio, fim
 
 # =============================================================================
 # FIREBASE / MEMÓRIA
@@ -762,7 +857,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         treinos.append({
             "tipo": a.get("type"),
             "nome": a.get("name"),
-            "data": data_local,            
+            "data": data_local,
             "dist_km": round((a.get("distance") or 0) / 1000, 2),
             "dur_min": round((a.get("moving_time") or 0) / 60, 1),
             "fc_med": a.get("average_heartrate"),
@@ -775,7 +870,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "intensidade": a.get("icu_intensity"),
             "trimp": round(a.get("trimp"), 1) if a.get("trimp") is not None else None,
             "cal": a.get("calories"),
-            
+
             "ftp": a.get("icu_ftp") or a.get("icu_pm_ftp") or a.get("icu_rolling_ftp"),
             "power_range": a.get("power_range"),
             "power_load": a.get("power_load"),
@@ -789,7 +884,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "decoupling": a.get("decoupling"),
             "comprimentos": a.get("lengths"),
             "comprimento_piscina": a.get("pool_length"),
-            
+
         })
 
     def soma_tipo(chave):
@@ -1221,13 +1316,20 @@ def preparar_dados_relatorio(d):
 
         treinos_limpos.append(limpar_vazios(item))
 
+    # V18.1: remove apenas a nota interna de dev do alerta enviado ao modelo.
+    # O /metricas continua exibindo a observacao normalmente (usa o dict original).
+    indicadores = dict(d.get("indicadores") or {})
+    alerta = dict(indicadores.get("alerta_recuperacao") or {})
+    alerta.pop("observacao", None)
+    indicadores["alerta_recuperacao"] = alerta
+
     dados = {
         "periodo": d.get("periodo"),
         "dias": d.get("dias"),
         "totais": d.get("totais"),
         "condicionamento": d.get("condicionamento"),
         "recuperacao": d.get("recuperacao"),
-        "indicadores": d.get("indicadores"),
+        "indicadores": indicadores,
         "treinos": treinos_limpos,
     }
 
@@ -1237,42 +1339,14 @@ def preparar_dados_relatorio(d):
 async def relatorio_command(update, context):
     uid = update.effective_user.id
 
-    dias = 7
-    inicio = None
-    fim = None
-
-    args = context.args
-
-    if args:
-        texto_args = (
-            " ".join(args)
-            .replace(" até ", " ")
-            .replace(" a ", " ")
-            .replace("-", " ")
+    try:
+        dias, inicio, fim = parse_periodo_args(context.args)
+    except ValueError:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "Formato inválido. Use:\n/relatorio 7\nou\n/relatorio 25/05/26 31/05/26"
         )
-
-        partes = [p.strip() for p in texto_args.split() if p.strip()]
-        datas = []
-
-        for p in partes:
-            try:
-                normalizar_data_br(p)
-                datas.append(p)
-            except ValueError:
-                pass
-
-        if len(datas) >= 2:
-            inicio = datas[0]
-            fim = datas[1]
-        else:
-            try:
-                dias = int(args[0])
-            except ValueError:
-                await context.bot.send_message(
-                    update.effective_chat.id,
-                    "Formato inválido. Use:\n/relatorio 7\nou\n/relatorio 25/05/26 31/05/26"
-                )
-                return
+        return
 
     msg_status = (
         f"📊 Gerando relatório de {inicio} a {fim}..."
@@ -1284,11 +1358,11 @@ async def relatorio_command(update, context):
 
     try:
         d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
-        
+
         dias_relatorio = d.get("dias", dias)
         modelo_relatorio = MODEL_FAST if dias_relatorio < 7 else MODEL_MAIN
-        limite_saida = 2500 if dias_relatorio < 7 else 3500  
-        
+        limite_saida = 2500 if dias_relatorio < 7 else 3500
+
     except Exception as e:
         print("Erro relatorio:", e)
         await context.bot.send_message(
@@ -1297,67 +1371,20 @@ async def relatorio_command(update, context):
         )
         return
 
-    prompt = f"""
-Você é coach de endurance e cientista de dados de performance.
+    # V18.1: JSON compacto (sem espaços) — mesmo conteúdo, menos tokens.
+    dados_json = json.dumps(
+        preparar_dados_relatorio(d),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str
+    )
 
-Analise os dados do período {d['periodo']}.
-
-DADOS:
-{json.dumps(preparar_dados_relatorio(d), ensure_ascii=False, default=str)}
-
-REGRAS:
-- Texto puro. Sem Markdown (**, --, ##).
-- Máximo 3700 caracteres.
-- Use os indicadores já calculados. Não recalcule.
-- Não invente dado ausente.
-- Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
-- Se alerta_recuperacao vier moderado/alto, recomende reduzir intensidade e priorizar sono.
-- Priorize conclusão sobre descrição. Cada insight aparece uma vez.
-ESTILO:
-- Mantenha linguagem humana e agradável de ler.
-- Use os emojis das seções (📊 🔗 🧠 📈 ⚠️ 🎯).
-- Pode usar frases curtas de interpretação prática quando agregarem valor.
-
-INTERPRETAÇÕES FIXAS:
-ACWR < 0.8 = subestímulo | 0.8-1.3 = controlado | 1.3-1.5 = atenção | >1.5 = risco de lesão
-TSB positivo = descansado | negativo = carregado
-CTL subindo = ganho de base | caindo = perda de tração
-Monotonia/strain altos = risco de fadiga acumulada
-
-MÉTRICAS A CORRELACIONAR (use todas disponíveis):
-CTL, ATL, TSB, ACWR, monotonia, strain, carga_por_dia, carga_por_sessao, densidade_treino,
-dias_ativos_pct, distribuição de carga, maior_treino_carga/duracao/distancia,
-HRV/tendência HRV, RHR/tendência RHR, sono/tendência sono, readiness, body battery,
-stress, VO2max, FTP/eFTP, razão carga corrida/bike, percentual sessões alta intensidade,
-potência, cadência, TRIMP, pace_100m, DPS e SWOLF de natação.
-
-📊 RESUMO DO PERÍODO
-Volume por modalidade, carga total, sessões, distribuição e destaques.
-
-🔗 CORRELAÇÕES
-Conecte recuperação, carga e qualidade dos treinos. Identifique padrões.
-
-🧠 CONDICIONAMENTO
-Para cada métrica disponível em DADOS (CTL, ATL, TSB, ACWR, VO2max, FTP/eFTP,
-monotonia, strain, tendências de HRV/sono/RHR, métricas de natação):
-nível atual, tendência, impacto na performance e risco de lesão.
-
-📈 TENDÊNCIAS
-O que melhorou, piorou e principal gargalo.
-
-⚠️ PONTO DE ATENÇÃO
-Maior risco ou oportunidade. Sem termos diagnósticos.
-
-🎯 RECOMENDAÇÃO
-Ajuste prático para a próxima semana.
-
-PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática
-"""
-
+    # V18.1: instruções fixas no system (prefixo estável → favorece prompt
+    # caching da OpenAI), dados variáveis por último no user.
     resposta = chamar_gpt_sync(
         [
-            {"role": "system", "content": ESTILO_SOPHOS},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": ESTILO_SOPHOS + "\n\n" + PROMPT_RELATORIO},
+            {"role": "user", "content": f"Analise os dados do período {d['periodo']}.\n\nDADOS:\n{dados_json}"},
         ],
         model=modelo_relatorio,
         max_tokens=limite_saida,
@@ -1367,49 +1394,21 @@ PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática
     context.user_data["ultima_resposta"] = resposta
 
     await enviar_texto_longo(
-    context,
-    update.effective_chat.id,
-    "📊 Relatório de Performance:\n\n" + resposta,
-    reply_markup=marcadores_feedback("relatorio")
+        context,
+        update.effective_chat.id,
+        "📊 Relatório de Performance:\n\n" + resposta,
+        reply_markup=marcadores_feedback("relatorio")
     )
 
 async def metricas_command(update, context):
-    dias = 7
-    inicio = None
-    fim = None
-
-    args = context.args
-
-    if args:
-        texto_args = (
-            " ".join(args)
-            .replace(" até ", " ")
-            .replace(" a ", " ")
-            .replace("-", " ")
+    try:
+        dias, inicio, fim = parse_periodo_args(context.args)
+    except ValueError:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "Formato inválido. Use:\n/metricas 7\nou\n/metricas 25/05/26 31/05/26"
         )
-
-        partes = [p.strip() for p in texto_args.split() if p.strip()]
-        datas = []
-
-        for p in partes:
-            try:
-                normalizar_data_br(p)
-                datas.append(p)
-            except ValueError:
-                pass
-
-        if len(datas) >= 2:
-            inicio = datas[0]
-            fim = datas[1]
-        else:
-            try:
-                dias = int(args[0])
-            except ValueError:
-                await context.bot.send_message(
-                    update.effective_chat.id,
-                    "Formato inválido. Use:\n/metricas 7\nou\n/metricas 25/05/26 31/05/26"
-                )
-                return
+        return
 
     msg_status = (
         f"📊 Coletando métricas de {inicio} a {fim}..."
@@ -1436,7 +1435,7 @@ async def metricas_command(update, context):
         update.effective_chat.id,
         texto
     )
-    
+
 # =============================================================================
 # COMANDOS
 # =============================================================================
@@ -1603,17 +1602,19 @@ async def voz(update, context):
 # =============================================================================
 
 def escolher_modelo(texto: str) -> str:
-    t = texto.lower().strip()
+    # Fix V18.1: normaliza acentos. Antes, "análise"/"estratégia"/"código"
+    # não casavam com os gatilhos sem acento e caíam no MODEL_FAST por engano.
+    t = remover_acentos(texto.lower().strip())
 
     gatilhos_complexos = [
         "analise", "analisa", "avaliar", "avalie",
         "compare", "comparar",
-        "estratégia", "decisão", "risco",
+        "estrategia", "decisao", "risco",
         "investimento", "contrato", "carreira",
-        "relatório", "suplemento",
-        "código", "corrija", "erro", "bug",
+        "relatorio", "suplemento",
+        "codigo", "corrija", "erro", "bug",
         "projeto", "planejamento",
-        "jurídico", "financeiro",
+        "juridico", "financeiro",
     ]
 
     if any(g in t for g in gatilhos_complexos):
@@ -1625,14 +1626,15 @@ def escolher_modelo(texto: str) -> str:
     return MODEL_MAIN
 
 def deve_buscar_memoria(texto: str) -> bool:
-    t = texto.lower().strip()
+    # Fix V18.1: normaliza acentos antes de comparar
+    t = remover_acentos(texto.lower().strip())
 
     if len(t) < 80:
         return False
 
     gatilhos = [
         "lembra", "lembrar", "com base",
-        "histórico", "antes", "já falei",
+        "historico", "antes", "ja falei",
         "minha rotina", "meu treino", "meus dados",
         "minha carteira", "meu filho", "sophos",
         "meu trabalho", "minha dieta"
@@ -1669,8 +1671,8 @@ async def processar_texto(user_id, texto, update, context):
         sem_ctx = await buscar_contexto_semantico(user_id, texto_original, top_k=5)
 
     if sem_ctx:
-        base += "\n\nMemórias relevantes:\n" + "\n".join(f"- {m}" for m in sem_ctx) 
-    
+        base += "\n\nMemórias relevantes:\n" + "\n".join(f"- {m}" for m in sem_ctx)
+
     prompt = f"""
 Contexto útil:
 {base}
@@ -1687,9 +1689,9 @@ Mensagem atual do usuário:
         messages.append({"role": "system", "content": estilo_dinamico})
 
     messages.append({"role": "user", "content": prompt})
-   
+
     try:
-        r = chamar_gpt_sync(messages, model=escolher_modelo(texto_original), user_id=user_id)    
+        r = chamar_gpt_sync(messages, model=escolher_modelo(texto_original), user_id=user_id)
     except Exception as e:
         print("❌ Erro OpenAI:", str(e))
         r = "⚠️ Erro ao gerar resposta. Tente novamente mais tarde."
@@ -1711,11 +1713,35 @@ async def mensagem(update, context):
 
     await processar_texto(uid, txt, update, context)
 
+def comprimir_imagem(temp_path, max_dim=1024, qualidade=80):
+    """V18.1: reduz resolução e peso da imagem antes do base64.
+    Foto de iPhone (12-48MP) vira ~1024px: corte de 50-70% nos tokens
+    de visão mantendo legibilidade de prints, dashboards e documentos."""
+    try:
+        img = Image.open(temp_path)
+        img = img.convert("RGB")
+        img.thumbnail((max_dim, max_dim))
+        novo_path = temp_path + "_min.jpg"
+        img.save(novo_path, "JPEG", quality=qualidade, optimize=True)
+        return novo_path
+    except Exception as e:
+        print("Erro ao comprimir imagem:", e)
+        return temp_path
+
 def analisar_imagem_com_ia(temp_path, instrucao="Analise esta imagem."):
     modelo = MODEL_MAIN if "modo avançado" in (instrucao or "").lower() else MODEL_FAST
 
-    with open(temp_path, "rb") as img:
+    # V18.1: comprime antes de enviar
+    path_min = comprimir_imagem(temp_path)
+
+    with open(path_min, "rb") as img:
         base64_image = base64.b64encode(img.read()).decode("utf-8")
+
+    if path_min != temp_path:
+        try:
+            os.remove(path_min)
+        except Exception:
+            pass
 
     prompt = f"""
 Instrução do usuário:
@@ -1736,7 +1762,7 @@ Se for print de treino, dashboard, planilha, contrato, conversa ou documento, ad
 
     resp = client.chat.completions.create(
         model=modelo,
-        messages=[   
+        messages=[
             {"role": "system", "content": ESTILO_SOPHOS},
             {
                 "role": "user",
@@ -1798,7 +1824,7 @@ def extrair_texto_arquivo(temp_path, file_name=""):
     elif nome.endswith((".csv", ".txt", ".md", ".json")):
         with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
             extracted_text = f.read().strip()
-   
+
     return extracted_text.strip()
 
 def preparar_texto_documento(texto):
