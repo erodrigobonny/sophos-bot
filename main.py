@@ -1308,6 +1308,10 @@ REGRAS:
 - Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
 - Se alerta_recuperacao vier moderado/alto, recomende reduzir intensidade e priorizar sono.
 - Priorize conclusão sobre descrição. Cada insight aparece uma vez.
+ESTILO:
+- Mantenha linguagem humana e agradável de ler.
+- Use os emojis das seções (📊 🔗 🧠 📈 ⚠️ 🎯).
+- Pode usar frases curtas de interpretação prática quando agregarem valor.
 
 INTERPRETAÇÕES FIXAS:
 ACWR < 0.8 = subestímulo | 0.8-1.3 = controlado | 1.3-1.5 = atenção | >1.5 = risco de lesão
@@ -1350,7 +1354,7 @@ PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática
             {"role": "system", "content": ESTILO_SOPHOS},
             {"role": "user", "content": prompt}
         ],
-        model=MODEL_MAIN,
+        model=MODEL_FAST,
         max_tokens=3000,
         user_id=uid
     )
