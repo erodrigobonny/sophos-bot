@@ -1284,6 +1284,11 @@ async def relatorio_command(update, context):
 
     try:
         d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
+        
+        dias_relatorio = d.get("dias", dias)
+        modelo_relatorio = MODEL_FAST if dias_relatorio < 7 else MODEL_MAIN
+        limite_saida = 2500 if dias_relatorio < 7 else 3500  
+        
     except Exception as e:
         print("Erro relatorio:", e)
         await context.bot.send_message(
@@ -1354,8 +1359,8 @@ PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática
             {"role": "system", "content": ESTILO_SOPHOS},
             {"role": "user", "content": prompt}
         ],
-        model=MODEL_MAIN,
-        max_tokens=3000,
+        model=modelo_relatorio,
+        max_tokens=limite_saida,
         user_id=uid
     )
 
