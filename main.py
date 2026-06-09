@@ -588,7 +588,7 @@ def calcular_indicadores(d):
         monotonia = None
         strain = None
 
-        natacoes = [
+    natacoes = [
         t for t in treinos
         if "swim" in (t.get("tipo") or "").lower()
         and (t.get("dist_km") or 0) > 0
@@ -790,7 +790,6 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "comprimentos": a.get("lengths"),
             "comprimento_piscina": a.get("pool_length"),
             
-            
         })
 
     def soma_tipo(chave):
@@ -891,6 +890,12 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     ultimo = next((w for w in reversed(wel) if w.get("ctl") is not None), {})
     primeiro = next((w for w in wel if w.get("ctl") is not None), {})
 
+    ride_info = next(
+        (s for s in (ultimo.get("sportInfo") or [])
+         if s.get("type") == "Ride"),
+        {}
+    )
+
     condicionamento = {
         "fitness_ctl": round(ultimo.get("ctl") or 0, 1),
         "fadiga_atl": round(ultimo.get("atl") or 0, 1),
@@ -899,6 +904,9 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "ftp": ultimo.get("ftp"),
         "ftp_wkg": ultimo.get("ftp_wkg"),
         "tendencia_fitness": round((ultimo.get("ctl") or 0) - (primeiro.get("ctl") or 0), 1),
+        "eftp": round(ride_info.get("eftp"), 1) if ride_info.get("eftp") else None,
+        "wprime": round(ride_info.get("wPrime"), 0) if ride_info.get("wPrime") else None,
+        "pmax": round(ride_info.get("pMax"), 0) if ride_info.get("pMax") else None,
     }
 
     recuperacao = {
@@ -929,7 +937,6 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
     resultado["indicadores"] = calcular_indicadores(resultado)
 
     return resultado
-
 
 #--------------- METRICAS--------------------#
 def valor(v, sufixo=""):
@@ -1283,7 +1290,8 @@ Estruture a resposta assim:
 
 🧠 CONDICIONAMENTO
 — Analise obrigatoriamente: leitura de fitness (CTL), fadiga (ATL),  forma (TSB), VO2MAX, Body Battery, Disposição, carga_por_dia, carga_por_sessao, densidade_treino, dias_ativos_pct, 
-maior_treino_carga, maior_treino_duracao, maior_treino_distancia, alerta_recuperacao, relação carga aguda/crônica (ACWR) em linguagem simples.
+maior_treino_carga, maior_treino_duracao, maior_treino_distancia, alerta_recuperacao, relação carga aguda/crônica (ACWR), monotonia, strain, tendência HRV, tendência sono, tendência RHR,
+FTP vs eFTP, razão carga corrida/bike, percentual de sessões de alta intensidade, métricas estimadas de natação: pace_100m, DPS estimado e SWOLF estimado em linguagem simples.
 Explique:
 - nível atual
 - tendência
