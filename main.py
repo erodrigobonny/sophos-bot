@@ -1,4 +1,4 @@
-# Sophos V17 Enxuto – main.py
+# Sophos V18 - Otimizado – main.py
 
 import os
 import re
