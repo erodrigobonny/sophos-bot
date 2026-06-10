@@ -1,6 +1,17 @@
-# Sophos V21 – main.py
+# Sophos V21.1 – main.py
 #
-# Mudanças vs V20 (tudo anterior mantido):
+# Mudanças vs V21 (tudo anterior mantido):
+# 14. (V21.1) Frescura do dado: status_baseline agora carrega ultimo_dia e
+#     inclui_fim_periodo por métrica. O /prontidao avisa quando HRV/RHR/sono
+#     de hoje ainda não sincronizaram, mostra "dados até dd/mm" e soma 1
+#     ponto de cautela apenas se o sono de hoje estiver ausente APÓS dia de
+#     carga acima da média (sem punir atraso de sincronização à toa).
+#     O /metricas exibe "até dd" em cada métrica do status wellness.
+# 15. (V21.1) Timezone local (America/Recife): "hoje" e "ontem" deixam de
+#     seguir o relógio UTC do servidor. Corrige /prontidao e relatórios
+#     rodados entre 21h e meia-noite, que deslocavam a janela em 1 dia.
+#
+# Mudanças vs V20:
 # 12. (V21) /prontidao — semáforo diário de prontidão 🟢🟡🔴 calculado
 #     100% em Python (custo zero de GPT): status HRV/RHR/sono vs baseline,
 #     ACWR, TSB, monotonia e treino de ontem viram pontuação de risco com
@@ -375,6 +386,20 @@ if PINECONE_API_KEY and PINECONE_ENVIRONMENT:
 
 def agora_iso():
     return datetime.now().isoformat()
+
+# V21.1: timezone local. Servidores (Railway/Render) rodam em UTC; entre
+# 21h e meia-noite em Recife (UTC-3), "hoje" do servidor já é amanhã —
+# o que desloca /prontidao e relatórios em 1 dia. Fallback para offset
+# fixo -3 se o banco de timezones não estiver disponível no container.
+try:
+    from zoneinfo import ZoneInfo
+    TZ_LOCAL = ZoneInfo("America/Recife")
+except Exception:
+    from datetime import timezone as _tz
+    TZ_LOCAL = _tz(timedelta(hours=-3))
+
+def hoje_local():
+    return datetime.now(TZ_LOCAL).date()
 
 def remover_acentos(texto: str) -> str:
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
@@ -1073,13 +1098,20 @@ def calcular_indicadores(d, baseline=None):
         }
     }
 
-def status_baseline(vals, janela_curta=7, janela_base=28):
-    """V19.1: status estilo Garmin — média dos últimos 7 dias vs baseline
-    de 28 dias, com faixa de ±1 desvio padrão.
-    'vals' deve estar em ordem cronológica.
-    Retorna None se houver menos de 14 registros (status não confiável)."""
-    if len(vals) < janela_curta + 7:
+def status_baseline(pontos, fim=None, janela_curta=7, janela_base=28):
+    """V21.1: status estilo Garmin — média dos últimos 7 registros vs
+    baseline de 28, com faixa de ±1 desvio padrão.
+    'pontos' = [{"data": "2026-06-10", "valor": 55.0}, ...]
+    Agora retorna também ultimo_dia e inclui_fim_periodo (frescura do dado),
+    para o /prontidao avisar quando o registro de hoje ainda não sincronizou.
+    Retorna None com menos de 14 registros (status não confiável)."""
+    pontos = [p for p in (pontos or []) if p.get("valor") is not None]
+    pontos.sort(key=lambda p: p.get("data") or "")
+
+    if len(pontos) < janela_curta + 7:
         return None
+
+    vals = [p["valor"] for p in pontos]
 
     recentes = vals[-janela_curta:]
     base = vals[-janela_base:] if len(vals) >= janela_base else vals
@@ -1104,6 +1136,9 @@ def status_baseline(vals, janela_curta=7, janela_base=28):
     else:
         status = "equilibrado"
 
+    ultimo_dia = pontos[-1].get("data")
+    fim_str = fim.isoformat() if hasattr(fim, "isoformat") else (str(fim) if fim else None)
+
     return {
         "status": status,
         "media_7d": round(media_recente, 1),
@@ -1111,6 +1146,8 @@ def status_baseline(vals, janela_curta=7, janela_base=28):
         "limite_inferior": round(limite_inferior, 1),
         "limite_superior": round(limite_superior, 1),
         "variacao_pct": round(variacao_pct, 1) if variacao_pct is not None else None,
+        "ultimo_dia": ultimo_dia,
+        "inclui_fim_periodo": (ultimo_dia == fim_str) if fim_str else None,
     }
 
 def coletar_baseline_wellness(base, auth, fim, janela_dias=35):
@@ -1140,23 +1177,25 @@ def coletar_baseline_wellness(base, auth, fim, janela_dias=35):
         # Ordem cronológica é obrigatória: média 7d usa o FIM da série
         wel.sort(key=lambda w: str(w.get("id") or w.get("date") or w.get("day") or ""))
 
+        # V21.1: cada ponto carrega a data — base da checagem de frescura
         def serie(campo, transform=lambda x: x):
-            vals = []
+            pontos = []
             for w in wel:
+                data_w = str(w.get("id") or w.get("date") or w.get("day") or "")[:10]
                 v = w.get(campo)
-                if v is not None:
+                if data_w and v is not None:
                     try:
-                        vals.append(transform(v))
+                        pontos.append({"data": data_w, "valor": transform(v)})
                     except Exception:
                         pass
-            return vals
+            return pontos
 
         baseline = {
             "janela": f"{base_old.isoformat()} a {fim.isoformat()}",
             "metodo": "media 7d vs baseline 28d, faixa de +/-1 desvio padrao",
-            "hrv": status_baseline(serie("hrv")),
-            "rhr": status_baseline(serie("restingHR")),
-            "sono_h": status_baseline(serie("sleepSecs", lambda s: s / 3600)),
+            "hrv": status_baseline(serie("hrv"), fim),
+            "rhr": status_baseline(serie("restingHR"), fim),
+            "sono_h": status_baseline(serie("sleepSecs", lambda s: s / 3600), fim),
         }
 
         # Se nenhuma métrica gerou status, baseline é inútil
@@ -1170,7 +1209,7 @@ def coletar_baseline_wellness(base, auth, fim, janela_dias=35):
         return None
 
 def coletar_intervals(dias=7, inicio=None, fim=None):
-    hoje = datetime.now().date()
+    hoje = hoje_local()  # V21.1: data local, não UTC do servidor
 
     if inicio and fim:
         inicio = normalizar_data_br(inicio) if isinstance(inicio, str) else inicio
@@ -1561,11 +1600,14 @@ def formatar_baseline(bl):
     def linha(nome, st, sufixo=""):
         if not st:
             return None
-        return (
+        texto = (
             f"{nome}: {st.get('media_7d')}{sufixo} (7d) vs "
             f"{st.get('baseline_28d')}{sufixo} (28d) | "
             f"variação {st.get('variacao_pct')}% | status: {st.get('status')}"
         )
+        if st.get("ultimo_dia"):
+            texto += f" | até {st['ultimo_dia']}"
+        return texto
 
     for nome, chave, suf in [("HRV", "hrv", ""), ("RHR", "rhr", " bpm"), ("Sono", "sono_h", " h")]:
         l = linha(nome, bl.get(chave), suf)
@@ -2110,7 +2152,7 @@ def calcular_prontidao(d):
         motivos.append(f"monotonia {mono} (carga sem variação)")
 
     # --- Treino de ontem ---
-    ontem = (datetime.now().date() - timedelta(days=1)).isoformat()
+    ontem = (hoje_local() - timedelta(days=1)).isoformat()  # V21.1: data local
     carga_ontem = round(sum(
         t.get("carga_treino") or 0 for t in treinos if t.get("data") == ontem
     ))
@@ -2121,6 +2163,28 @@ def calcular_prontidao(d):
         motivos.append(f"treino pesado ontem (carga {carga_ontem} vs média diária {carga_dia})")
     elif carga_ontem == 0:
         positivos.append("descanso ontem")
+
+    # --- V21.1: frescura do dado ---
+    # Semáforo confiante com dado defasado é pior que semáforo ausente.
+    avisos = []
+
+    def desatualizado(st):
+        return bool(st) and st.get("inclui_fim_periodo") is False
+
+    for nome, st in (("HRV", hrv_st), ("RHR", rhr_st), ("sono", sono_st)):
+        if desatualizado(st):
+            avisos.append(f"{nome} de hoje ainda não sincronizou (último registro: {st.get('ultimo_dia')})")
+
+    # Cautela: sono de hoje ausente APÓS dia de carga acima da média.
+    # Só nesse cruzamento — atraso de sincronização sozinho não pune.
+    if desatualizado(sono_st) and carga_dia and carga_ontem > carga_dia:
+        pontos += 1
+        motivos.append("sono de hoje ausente após dia de carga acima da média (cautela)")
+
+    ultimos_dias = [
+        st.get("ultimo_dia") for st in (hrv_st, rhr_st, sono_st) if st.get("ultimo_dia")
+    ]
+    dados_ate = max(ultimos_dias) if ultimos_dias else None
 
     # --- Classificação ---
     if pontos >= 5:
@@ -2144,6 +2208,8 @@ def calcular_prontidao(d):
         "motivos": motivos,
         "positivos": positivos,
         "acao": acao,
+        "avisos": avisos,
+        "dados_ate": dados_ate,
         "contexto": limpar_vazios({
             "acwr": acwr,
             "tsb": tsb,
@@ -2189,6 +2255,13 @@ def formatar_prontidao(p):
         if partes:
             linhas.append("")
             linhas.append("Contexto: " + " | ".join(partes))
+
+    # V21.1: transparência sobre frescura do dado
+    if p.get("avisos"):
+        linhas.append("")
+        linhas.append(f"⏳ Atenção — prontidão calculada com dados até {p.get('dados_ate')}:")
+        for a in p["avisos"]:
+            linhas.append(f"• {a}")
 
     return "\n".join(linhas)
 
@@ -2416,7 +2489,7 @@ async def comparar_command(update, context):
 
     dias = max(2, min(dias, 60))
 
-    hoje = datetime.now().date()
+    hoje = hoje_local()  # V21.1: data local, não UTC do servidor
     fim_atual = hoje
     inicio_atual = hoje - timedelta(days=dias - 1)
     fim_anterior = inicio_atual - timedelta(days=1)
