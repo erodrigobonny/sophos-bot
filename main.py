@@ -1,6 +1,29 @@
-# Sophos V20 - Transformacional - Fable Alto – main.py
+# Sophos V21 – main.py
 #
-# Mudanças vs V18.1 (tudo da V18.1 mantido):
+# Mudanças vs V20 (tudo anterior mantido):
+# 12. (V21) /prontidao — semáforo diário de prontidão 🟢🟡🔴 calculado
+#     100% em Python (custo zero de GPT): status HRV/RHR/sono vs baseline,
+#     ACWR, TSB, monotonia e treino de ontem viram pontuação de risco com
+#     ação recomendada. Fallback para cortes genéricos sem baseline.
+# 13. (V21) /prontidao ia — opcional: anexa comentário curto do MODEL_FAST
+#     sobre o semáforo (payload mínimo, custa centavos).
+#
+# Mudanças vs V19.1:
+# 8. (V20) FIX off-by-one: "/relatorio 7" agora cobre exatamente 7 dias
+#    (antes pegava 8). Afeta relatorio, analise, metricas e comparar.
+# 9. (V20) Relatório híbrido por janela:
+#    - até 30 dias: modo OPERACIONAL (idêntico ao atual, byte a byte)
+#    - acima de 30: modo HISTÓRICO — agregação semanal (carga, volume por
+#      modalidade, HRV/RHR/sono/stress por semana), top 5 outliers por
+#      carga, destaques de melhor/pior semana. Treino individual sai do
+#      payload; trajetória entra. Corte de 30-60% no input de períodos
+#      longos com prompt próprio (PROMPT_RELATORIO_HISTORICO).
+# 10. (V20) /comparar usa MODEL_FAST para períodos < 14 dias.
+# 11. (V20) coletar_intervals retém série diária compacta de wellness
+#     (wellness_diario) — matéria-prima da agregação semanal; nunca é
+#     enviada crua ao modelo.
+#
+# Mudanças vs V18.1:
 # 1. /analise <pedido livre> — motor de análise sob demanda:
 #    parser local extrai período + focos (corrida, bike, natação, força,
 #    sono, recuperação, peso — combináveis) e envia ao modelo só o
@@ -180,6 +203,46 @@ Maior risco ou oportunidade. Sem termos diagnósticos.
 Ajuste prático para a próxima semana.
 
 PRIORIDADE: 1. ponto forte | 2. gargalo | 3. risco | 4. ação prática"""
+
+PROMPT_RELATORIO_HISTORICO = """Você é coach de endurance e cientista de dados de performance.
+
+Este é um RELATÓRIO HISTÓRICO (período acima de 30 dias). Não analise treinos
+individuais, exceto os outliers fornecidos. Priorize trajetória: evolução do
+condicionamento, recuperação, sinais vitais, consistência e sustentabilidade
+da carga ao longo das semanas.
+
+REGRAS:
+- Texto puro. Sem Markdown (**, --, ##). Máximo 3700 caracteres.
+- Use resumo_semanal como matéria-prima principal. Indicadores já estão
+  calculados; não recalcule e não invente dado ausente.
+- Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
+- Se houver "baseline" nos dados, ele traz por métrica: status
+  (baixo/desequilibrado/equilibrado/alto), media_7d, baseline_28d e
+  variacao_pct. HRV baixo/desequilibrado e RHR alto = recuperação comprometida.
+- Cite semanas específicas (número e intervalo) ao apontar blocos fortes,
+  fracos ou de fadiga acumulada.
+- Priorize conclusão sobre descrição. Cada insight aparece uma vez.
+
+ESTRUTURA:
+📊 VISÃO DO PERÍODO
+Volume total, distribuição por modalidade e consistência (semanas cheias vs vazias).
+
+📈 EVOLUÇÃO DO CONDICIONAMENTO
+CTL/ATL/TSB, VO2max, FTP/eFTP: subiu, caiu ou sustentou? Com boa recuperação ou na marra?
+
+🛌 RECUPERAÇÃO AO LONGO DAS SEMANAS
+HRV, RHR, sono e stress semana a semana: acompanharam a carga?
+
+🔗 SUSTENTABILIDADE DA CARGA
+ACWR, monotonia, strain, blocos de fadiga acumulada e como a carga se distribuiu.
+
+⚠️ RISCO E OPORTUNIDADE
+Principal padrão preocupante ou destravado no período.
+
+🎯 DIREÇÃO DO PRÓXIMO BLOCO
+Leitura de periodização: o que priorizar nas próximas semanas.
+
+PRIORIDADE: 1. trajetória | 2. sustentabilidade | 3. risco | 4. direção prática"""
 
 PROMPT_ANALISE = """Você é coach de endurance e cientista de dados de performance.
 
@@ -1113,8 +1176,11 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         inicio = normalizar_data_br(inicio) if isinstance(inicio, str) else inicio
         fim = normalizar_data_br(fim) if isinstance(fim, str) else fim
     else:
+        # V20: fix off-by-one — "/relatorio 7" agora cobre exatamente 7 dias.
+        # Antes: inicio = hoje - 7 com as duas pontas inclusivas = 8 dias.
+        dias = max(1, dias)
         fim = hoje
-        inicio = hoje - timedelta(days=dias)
+        inicio = hoje - timedelta(days=dias - 1)
 
     if fim < inicio:
         raise ValueError("Data final menor que data inicial.")
@@ -1316,6 +1382,23 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "tendencia_sono_h": tendencia("sleepSecs", lambda s: s / 3600),
     }
 
+    # V20: série diária compacta de wellness — matéria-prima da agregação
+    # semanal do modo histórico (>30 dias). Nunca é enviada crua ao modelo:
+    # os payloads escolhem suas chaves explicitamente.
+    wellness_diario = []
+    for w in wel:
+        data_w = str(w.get("id") or w.get("date") or w.get("day") or "")[:10]
+        if not data_w:
+            continue
+        wellness_diario.append({
+            "data": data_w,
+            "hrv": w.get("hrv"),
+            "rhr": w.get("restingHR"),
+            "sono_h": round(w.get("sleepSecs") / 3600, 1) if w.get("sleepSecs") else None,
+            "stress": w.get("avgStress"),
+            "body_battery": w.get("bodyBattery"),
+        })
+
     # V19.1: status de wellness (7d vs 28d) ancorado no FIM do período
     baseline = coletar_baseline_wellness(base, auth, fim)
 
@@ -1327,6 +1410,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "condicionamento": condicionamento,
         "recuperacao": recuperacao,
         "baseline": baseline,
+        "wellness_diario": wellness_diario,
     }
 
     resultado["indicadores"] = calcular_indicadores(resultado, baseline)
@@ -1644,6 +1728,18 @@ def treino_para_payload(t):
 
 
 def preparar_dados_relatorio(d):
+    """V20: roteador por janela.
+    Até 30 dias -> modo operacional (idêntico ao comportamento anterior).
+    Acima de 30 -> modo histórico (agregação semanal, sem treinos individuais)."""
+    if (d.get("dias") or 0) > 30:
+        return preparar_dados_relatorio_historico(d)
+
+    return preparar_dados_relatorio_operacional(d)
+
+
+def preparar_dados_relatorio_operacional(d):
+    """Modo operacional (≤30 dias): payload completo com treinos individuais.
+    Comportamento idêntico ao da versão anterior — nada mudou aqui."""
     treinos = d.get("treinos", [])
     treinos_limpos = [treino_para_payload(t) for t in treinos]
 
@@ -1663,6 +1759,164 @@ def preparar_dados_relatorio(d):
         "baseline": d.get("baseline"),
         "indicadores": indicadores,
         "treinos": treinos_limpos,
+    }
+
+    return limpar_vazios(dados)
+
+
+def _semana_vazia():
+    return {
+        "sessoes": 0, "carga": 0, "dur_min": 0,
+        "corrida_km": 0, "bike_km": 0, "natacao_m": 0, "forca_sessoes": 0,
+        "_hrv": [], "_rhr": [], "_sono": [], "_stress": [],
+    }
+
+
+def agregar_semanal(d):
+    """V20: agrega treinos e wellness em blocos de 7 dias a partir do início
+    do período. O detalhe fica no Python; a IA só interpreta a trajetória."""
+    try:
+        inicio = datetime.fromisoformat(d.get("periodo", "").split(" a ")[0]).date()
+    except Exception:
+        return None
+
+    def bloco(data_str):
+        try:
+            delta = (datetime.fromisoformat(data_str).date() - inicio).days
+            return delta // 7 if delta >= 0 else None
+        except Exception:
+            return None
+
+    semanas = {}
+
+    for t in d.get("treinos", []):
+        b = bloco(t.get("data") or "")
+        if b is None:
+            continue
+
+        s = semanas.setdefault(b, _semana_vazia())
+        s["sessoes"] += 1
+        s["carga"] += t.get("carga_treino") or 0
+        s["dur_min"] += t.get("dur_min") or 0
+
+        tipo = (t.get("tipo") or "").lower()
+        if "run" in tipo:
+            s["corrida_km"] += t.get("dist_km") or 0
+        elif "ride" in tipo or "bike" in tipo:
+            s["bike_km"] += t.get("dist_km") or 0
+        elif "swim" in tipo:
+            s["natacao_m"] += (t.get("dist_km") or 0) * 1000
+        elif "strength" in tipo or "weight" in tipo:
+            s["forca_sessoes"] += 1
+
+    for w in d.get("wellness_diario", []):
+        b = bloco(w.get("data") or "")
+        if b is None:
+            continue
+
+        s = semanas.setdefault(b, _semana_vazia())
+        if w.get("hrv") is not None:
+            s["_hrv"].append(w["hrv"])
+        if w.get("rhr") is not None:
+            s["_rhr"].append(w["rhr"])
+        if w.get("sono_h") is not None:
+            s["_sono"].append(w["sono_h"])
+        if w.get("stress") is not None:
+            s["_stress"].append(w["stress"])
+
+    if not semanas:
+        return None
+
+    def media_lista(lista):
+        return round(sum(lista) / len(lista), 1) if lista else None
+
+    resumo = []
+
+    for b in sorted(semanas):
+        s = semanas[b]
+        ini_b = inicio + timedelta(days=b * 7)
+        fim_b = ini_b + timedelta(days=6)
+
+        resumo.append(limpar_vazios({
+            "semana": b + 1,
+            "intervalo": f"{ini_b.strftime('%d/%m')}-{fim_b.strftime('%d/%m')}",
+            "sessoes": s["sessoes"],
+            "carga": round(s["carga"]),
+            "dur_min": round(s["dur_min"]),
+            "corrida_km": round(s["corrida_km"], 1) or None,
+            "bike_km": round(s["bike_km"], 1) or None,
+            "natacao_m": round(s["natacao_m"]) or None,
+            "forca_sessoes": s["forca_sessoes"] or None,
+            "hrv": media_lista(s["_hrv"]),
+            "rhr": media_lista(s["_rhr"]),
+            "sono_h": media_lista(s["_sono"]),
+            "stress": media_lista(s["_stress"]),
+        }))
+
+    return resumo
+
+
+def destaques_semanais(resumo):
+    """V20: melhor/pior semana — calculado em Python, custo zero de token."""
+    if not resumo:
+        return None
+
+    def ref(s):
+        return f"semana {s['semana']} ({s.get('intervalo')})" if s else None
+
+    com_carga = [s for s in resumo if s.get("carga")]
+    maior_carga = max(com_carga, key=lambda s: s["carga"], default=None)
+    menor_carga = min(com_carga, key=lambda s: s["carga"], default=None)
+
+    com_hrv = [s for s in resumo if s.get("hrv") is not None]
+    pior_rec = min(com_hrv, key=lambda s: s["hrv"], default=None)
+    melhor_rec = max(com_hrv, key=lambda s: s["hrv"], default=None)
+
+    return limpar_vazios({
+        "semana_maior_carga": ref(maior_carga),
+        "semana_menor_carga": ref(menor_carga),
+        "semana_pior_recuperacao_hrv": ref(pior_rec),
+        "semana_melhor_recuperacao_hrv": ref(melhor_rec),
+    })
+
+
+def preparar_dados_relatorio_historico(d):
+    """V20: modo histórico (>30 dias). Treino individual sai do payload;
+    entra agregação semanal + top 5 outliers por carga. Corte de 30-60%
+    no input sem perder a leitura de trajetória."""
+    indicadores = dict(d.get("indicadores") or {})
+    alerta = dict(indicadores.get("alerta_recuperacao") or {})
+    alerta.pop("observacao", None)
+    indicadores["alerta_recuperacao"] = alerta
+
+    # Detalhe por treino sai do modo histórico; trajetória entra.
+    for k in (
+        "maior_treino_carga", "maior_treino_duracao", "maior_treino_distancia",
+        "maior_carga_por_modalidade", "metricas_natacao",
+    ):
+        indicadores.pop(k, None)
+
+    resumo = agregar_semanal(d)
+
+    treinos = d.get("treinos", [])
+    outliers = sorted(
+        treinos,
+        key=lambda t: t.get("carga_treino") or 0,
+        reverse=True
+    )[:5]
+
+    dados = {
+        "modo": "historico",
+        "periodo": d.get("periodo"),
+        "dias": d.get("dias"),
+        "totais": d.get("totais"),
+        "condicionamento": d.get("condicionamento"),
+        "recuperacao": d.get("recuperacao"),
+        "baseline": d.get("baseline"),
+        "indicadores": indicadores,
+        "resumo_semanal": resumo,
+        "destaques_semanais": destaques_semanais(resumo),
+        "outliers_treinos_top5_carga": [treino_para_payload(t) for t in outliers],
     }
 
     return limpar_vazios(dados)
@@ -1765,6 +2019,238 @@ def filtrar_dados_para_analise(d, dominios):
     return limpar_vazios(payload)
 #------------------------------------------------------------------
 
+# =============================================================================
+# V21: PRONTIDÃO DIÁRIA (semáforo 100% Python, custo zero de GPT)
+# =============================================================================
+
+def calcular_prontidao(d):
+    """V21: semáforo de prontidão por pontuação de risco.
+    0-1 ponto = 🟢 verde | 2-4 = 🟡 amarelo | 5+ = 🔴 vermelho.
+    Usa status vs baseline quando disponível; senão cortes genéricos."""
+    ind = d.get("indicadores") or {}
+    cond = d.get("condicionamento") or {}
+    rec = d.get("recuperacao") or {}
+    bl = d.get("baseline") or {}
+    treinos = d.get("treinos") or []
+
+    pontos = 0
+    motivos = []
+    positivos = []
+
+    hrv_st = bl.get("hrv") or {}
+    rhr_st = bl.get("rhr") or {}
+    sono_st = bl.get("sono_h") or {}
+
+    # --- HRV (peso maior: melhor preditor isolado de recuperação) ---
+    st = hrv_st.get("status")
+    if st == "baixo":
+        pontos += 3
+        motivos.append(f"HRV bem abaixo do baseline ({hrv_st.get('variacao_pct')}%)")
+    elif st == "desequilibrado":
+        pontos += 2
+        motivos.append(f"HRV desequilibrado ({hrv_st.get('variacao_pct')}% vs baseline)")
+    elif st in ("equilibrado", "alto"):
+        positivos.append("HRV em dia")
+    elif rec.get("hrv_medio") is not None and rec["hrv_medio"] < 40:
+        pontos += 2
+        motivos.append("HRV baixo (corte genérico, sem baseline)")
+
+    # --- RHR (alto = ruim) ---
+    st = rhr_st.get("status")
+    if st == "alto":
+        pontos += 2
+        motivos.append(f"RHR {rhr_st.get('variacao_pct')}% acima do baseline")
+    elif st in ("equilibrado", "baixo"):
+        positivos.append("RHR estável")
+    elif rec.get("rhr_medio") is not None and rec["rhr_medio"] > 60:
+        pontos += 1
+        motivos.append("RHR elevado (corte genérico, sem baseline)")
+
+    # --- Sono ---
+    st = sono_st.get("status")
+    if st in ("baixo", "desequilibrado"):
+        pontos += 2
+        motivos.append(f"sono {abs(sono_st.get('variacao_pct') or 0)}% abaixo do baseline")
+    elif st in ("equilibrado", "alto"):
+        positivos.append("sono em dia")
+    elif rec.get("sono_medio_h") is not None and rec["sono_medio_h"] < 6.0:
+        pontos += 2
+        motivos.append("sono curto (corte genérico, sem baseline)")
+
+    # --- ACWR ---
+    acwr = ind.get("acwr")
+    if acwr is not None:
+        if acwr > 1.5:
+            pontos += 3
+            motivos.append(f"ACWR {acwr} (risco de lesão)")
+        elif acwr > 1.3:
+            pontos += 2
+            motivos.append(f"ACWR {acwr} (carga aguda em zona de atenção)")
+        elif acwr < 0.8:
+            positivos.append(f"ACWR {acwr} (carga aguda baixa, janela para progredir)")
+        else:
+            positivos.append(f"ACWR {acwr} (carga controlada)")
+
+    # --- TSB / Forma ---
+    tsb = cond.get("forma_tsb")
+    if tsb is not None:
+        if tsb < -20:
+            pontos += 2
+            motivos.append(f"TSB {tsb} (fadiga acumulada relevante)")
+        elif tsb < -10:
+            pontos += 1
+            motivos.append(f"TSB {tsb} (carregado)")
+        else:
+            positivos.append(f"TSB {tsb}")
+
+    # --- Monotonia ---
+    mono = ind.get("monotonia_carga")
+    if mono is not None and mono > 2.0:
+        pontos += 1
+        motivos.append(f"monotonia {mono} (carga sem variação)")
+
+    # --- Treino de ontem ---
+    ontem = (datetime.now().date() - timedelta(days=1)).isoformat()
+    carga_ontem = round(sum(
+        t.get("carga_treino") or 0 for t in treinos if t.get("data") == ontem
+    ))
+    carga_dia = ind.get("carga_por_dia") or 0
+
+    if carga_dia and carga_ontem > carga_dia * 1.8:
+        pontos += 1
+        motivos.append(f"treino pesado ontem (carga {carga_ontem} vs média diária {carga_dia})")
+    elif carga_ontem == 0:
+        positivos.append("descanso ontem")
+
+    # --- Classificação ---
+    if pontos >= 5:
+        nivel, emoji, rotulo = "vermelho", "🔴", "Reduzir"
+        acao = "Reduzir intensidade hoje. Descanso ativo, mobilidade ou off. Prioridade número um: dormir bem."
+    elif pontos >= 2:
+        nivel, emoji, rotulo = "amarelo", "🟡", "Atenção"
+        acao = "Treinar leve. Manter Z2, evitar tiros, séries pesadas e volume longo."
+    else:
+        nivel, emoji, rotulo = "verde", "🟢", "Treinar normal"
+        acao = "Sinal verde. Siga o plano; se houver intensidade programada, hoje é dia."
+
+    if not bl:
+        motivos.append("baseline indisponível — leitura com confiabilidade reduzida")
+
+    return {
+        "nivel": nivel,
+        "emoji": emoji,
+        "rotulo": rotulo,
+        "pontos": pontos,
+        "motivos": motivos,
+        "positivos": positivos,
+        "acao": acao,
+        "contexto": limpar_vazios({
+            "acwr": acwr,
+            "tsb": tsb,
+            "monotonia": mono,
+            "carga_ontem": carga_ontem or None,
+            "carga_media_dia": carga_dia or None,
+        }),
+    }
+
+
+def formatar_prontidao(p):
+    """V21: saída em texto puro do semáforo."""
+    linhas = []
+    linhas.append(f"{p['emoji']} PRONTIDÃO DE HOJE — {p['rotulo']} ({p['pontos']} pts)")
+    linhas.append("")
+
+    if p["motivos"]:
+        linhas.append("Sinais de alerta:")
+        for m in p["motivos"]:
+            linhas.append(f"• {m}")
+        linhas.append("")
+
+    if p["positivos"]:
+        linhas.append("A favor:")
+        for m in p["positivos"]:
+            linhas.append(f"• {m}")
+        linhas.append("")
+
+    linhas.append("Ação:")
+    linhas.append(p["acao"])
+
+    ctx = p.get("contexto") or {}
+    if ctx:
+        partes = []
+        if ctx.get("acwr") is not None:
+            partes.append(f"ACWR {ctx['acwr']}")
+        if ctx.get("tsb") is not None:
+            partes.append(f"TSB {ctx['tsb']}")
+        if ctx.get("monotonia") is not None:
+            partes.append(f"monotonia {ctx['monotonia']}")
+        if ctx.get("carga_ontem") is not None:
+            partes.append(f"carga ontem {ctx['carga_ontem']}")
+        if partes:
+            linhas.append("")
+            linhas.append("Contexto: " + " | ".join(partes))
+
+    return "\n".join(linhas)
+
+
+async def prontidao_command(update, context):
+    """V21: /prontidao — semáforo do dia, zero GPT.
+    /prontidao ia — anexa comentário curto do MODEL_FAST (payload mínimo)."""
+    uid = update.effective_user.id
+    quer_ia = bool(context.args) and "ia" in [a.lower() for a in context.args]
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        "🚦 Calculando prontidão de hoje..."
+    )
+
+    try:
+        d = coletar_intervals(dias=7)
+    except Exception as e:
+        print("Erro prontidao:", e)
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "⚠️ Falha ao coletar dados do Intervals.icu."
+        )
+        return
+
+    p = calcular_prontidao(d)
+    texto = formatar_prontidao(p)
+
+    if quer_ia:
+        try:
+            resumo_json = json.dumps(p, ensure_ascii=False, separators=(",", ":"), default=str)
+            comentario = chamar_gpt_sync(
+                [
+                    {"role": "system", "content": ESTILO_SOPHOS},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Semáforo de prontidão de hoje (já calculado, não recalcule):\n"
+                            f"{resumo_json}\n\n"
+                            "Comente em no máximo 3 frases, em texto puro, com tom de coach: "
+                            "o que esse quadro significa na prática e o que priorizar hoje."
+                        )
+                    },
+                ],
+                model=MODEL_FAST,
+                max_tokens=400,
+                user_id=uid
+            )
+            texto += "\n\n🧠 Sophos: " + comentario.strip()
+        except Exception as e:
+            print("Erro comentário IA prontidao:", e)
+
+    context.user_data["ultima_resposta"] = texto
+
+    await enviar_texto_longo(
+        context,
+        update.effective_chat.id,
+        texto,
+        reply_markup=marcadores_feedback("prontidao")
+    )
+
+
 async def relatorio_command(update, context):
     uid = update.effective_user.id
 
@@ -1789,6 +2275,7 @@ async def relatorio_command(update, context):
         d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
 
         dias_relatorio = d.get("dias", dias)
+        modo_historico = dias_relatorio > 30
         modelo_relatorio = MODEL_FAST if dias_relatorio < 7 else MODEL_MAIN
         limite_saida = 2500 if dias_relatorio < 7 else 3500
 
@@ -1807,9 +2294,12 @@ async def relatorio_command(update, context):
         default=str
     )
 
+    # V20: prompt por janela — operacional (≤30d) ou histórico (>30d)
+    prompt_sistema = PROMPT_RELATORIO_HISTORICO if modo_historico else PROMPT_RELATORIO
+
     resposta = chamar_gpt_sync(
         [
-            {"role": "system", "content": ESTILO_SOPHOS + "\n\n" + PROMPT_RELATORIO},
+            {"role": "system", "content": ESTILO_SOPHOS + "\n\n" + prompt_sistema},
             {"role": "user", "content": f"Analise os dados do período {d['periodo']}.\n\nDADOS:\n{dados_json}"},
         ],
         model=modelo_relatorio,
@@ -1971,7 +2461,7 @@ async def comparar_command(update, context):
             {"role": "system", "content": ESTILO_SOPHOS + "\n\n" + PROMPT_COMPARACAO},
             {"role": "user", "content": f"DADOS:\n{dados_json}"},
         ],
-        model=MODEL_MAIN,
+        model=MODEL_FAST if dias < 14 else MODEL_MAIN,  # V20: mini dá conta de comparação curta
         max_tokens=2500,
         user_id=uid
     )
@@ -2112,6 +2602,8 @@ async def comandos(update, context):
     msg = (
         "📌 Comandos disponíveis:\n"
         "/start — iniciar\n"
+        "/prontidao — semáforo do dia 🟢🟡🔴 (custo zero)\n"
+        "/prontidao ia — semáforo + comentário curto do Sophos\n"
         "/relatorio <dias> — relatório completo de performance\n"
         "/relatorio <xx/xx/xx xx/xx/xx> — relatório por período\n"
         "/analise <pedido livre> — análise focada\n"
@@ -2603,6 +3095,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("comandos", comandos))
     app.add_handler(CommandHandler("relatorio", relatorio_command))
+    app.add_handler(CommandHandler("prontidao", prontidao_command))
     app.add_handler(CommandHandler("analise", analise_command))
     app.add_handler(CommandHandler("comparar", comparar_command))
     app.add_handler(CommandHandler("metricas", metricas_command))
