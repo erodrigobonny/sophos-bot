@@ -1,6 +1,13 @@
-# Sophos V22 – main.py
+# Sophos V22.1 – main.py
 #
-# Mudanças vs V21.2 (tudo anterior mantido):
+# Mudanças vs V22 (tudo anterior mantido):
+# 18. (V22.1) Strain classificado no /prontidao: <80 baixo | 80-120
+#     moderado | 120-180 alto | >180 muito alto, mais linha "Leitura"
+#     que cruza strain com monotonia (carga ok + variação baixa é o
+#     combo mais traiçoeiro). Faixas genéricas; personalizar por
+#     baseline individual fica para versão futura se o volume mudar.
+#
+# Mudanças vs V21.2:
 # 17. (V22) RAMPA (rampRate da API do Intervals, variação de CTL/semana)
 #     integrada em todo o sistema:
 #     - /prontidao: regras de pontuação (>8 = +2 subida agressiva;
@@ -2328,8 +2335,34 @@ def formatar_prontidao(p):
         if mono is not None:
             zona_mono = "boa variação" if mono < 1.5 else ("atenção" if mono <= 2.0 else "uniforme demais")
             linhas.append(f"  Monotonia: {mono}  [{zona_mono}]")
+
+        # V22.1: strain classificado + leitura combinada com monotonia.
+        # Faixas genéricas calibradas para carga/dia ~40-60; revisitar se
+        # o volume mudar muito (ideal futuro: baseline individual).
         if strain is not None:
-            linhas.append(f"  Strain: {strain}")
+            if strain < 80:
+                zona_strain, comentario_strain = "baixo", "carga acumulada tranquila"
+            elif strain < 120:
+                zona_strain, comentario_strain = "moderado", "carga acumulada controlada"
+            elif strain < 180:
+                zona_strain, comentario_strain = "alto", "atenção à fadiga acumulada"
+            else:
+                zona_strain, comentario_strain = "muito alto", "risco maior de fadiga acumulada"
+
+            linhas.append(f"  Strain: {strain}  [{zona_strain}]")
+
+            # Leitura: o combo mais traiçoeiro é carga ok + variação baixa
+            if mono is not None and mono >= 2.0 and strain >= 80:
+                linhas.append(
+                    "  Leitura: carga não está explosiva, mas a variação está baixa; "
+                    "alterne melhor dias leves e fortes."
+                )
+            elif strain >= 120:
+                linhas.append(
+                    "  Leitura: carga acumulada alta; monitore sono, HRV e sensação de pernas."
+                )
+            else:
+                linhas.append(f"  Leitura: {comentario_strain}.")
 
         if ctx.get("carga_ontem") is not None:
             ref = f" (média/dia: {ctx['carga_media_dia']})" if ctx.get("carga_media_dia") else ""
