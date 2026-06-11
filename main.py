@@ -1,7 +1,21 @@
-# Sophos V21.1 – main.py
+# Sophos V22 – main.py
 #
-# Mudanças vs V21 (tudo anterior mantido):
-# 14. (V21.1) Frescura do dado: status_baseline agora carrega ultimo_dia e
+# Mudanças vs V21.2 (tudo anterior mantido):
+# 17. (V22) RAMPA (rampRate da API do Intervals, variação de CTL/semana)
+#     integrada em todo o sistema:
+#     - /prontidao: regras de pontuação (>8 = +2 subida agressiva;
+#       4-8 com HRV abaixo do baseline = +1 construindo sem absorver;
+#       negativa = ponto a favor, descarregando) + linha no painel.
+#     - /relatorio (operacional e histórico): ramp_rate no condicionamento,
+#       interpretação fixa no prompt e rampa média semanal no resumo_semanal
+#       do modo histórico.
+#     - /analise: ramp_rate no contexto_carga de toda análise focada.
+#     - /metricas: linha "Rampa (CTL/sem)".
+#     - /comparar: herda via condicionamento (rampa A vs B).
+#
+# Mudanças vs V21.1:
+# 16. (V21.2) /prontidao exibe CTL, ATL e Strain no painel de contexto.
+#     Os três já estavam calculados; agora são surfaceados na saída.
 #     inclui_fim_periodo por métrica. O /prontidao avisa quando HRV/RHR/sono
 #     de hoje ainda não sincronizaram, mostra "dados até dd/mm" e soma 1
 #     ponto de cautela apenas se o sono de hoje estiver ausente APÓS dia de
@@ -183,10 +197,12 @@ INTERPRETAÇÕES FIXAS:
 ACWR < 0.8 = subestímulo | 0.8-1.3 = controlado | 1.3-1.5 = atenção | >1.5 = risco de lesão
 TSB positivo = descansado | negativo = carregado
 CTL subindo = ganho de base | caindo = perda de tração
+Rampa (ramp_rate, CTL/semana): >8 = subida agressiva | 4-8 = acelerada | 0-4 = sustentável | <0 = descarga/absorção
+Rampa alta só é problema quando HRV/sono não acompanham (construindo sem absorver)
 Monotonia/strain altos = risco de fadiga acumulada
 
 MÉTRICAS A CORRELACIONAR (use todas disponíveis):
-CTL, ATL, TSB, ACWR, monotonia, strain, carga_por_dia, carga_por_sessao, densidade_treino,
+CTL, ATL, TSB, ACWR, rampa (ramp_rate), monotonia, strain, carga_por_dia, carga_por_sessao, densidade_treino,
 dias_ativos_pct, distribuição de carga, maior_treino_carga/duracao/distancia,
 HRV/tendência HRV, RHR/tendência RHR, sono/tendência sono, readiness, body battery,
 stress, VO2max, FTP/eFTP, razão carga corrida/bike, percentual sessões alta intensidade,
@@ -232,6 +248,10 @@ REGRAS:
   variacao_pct. HRV baixo/desequilibrado e RHR alto = recuperação comprometida.
 - Cite semanas específicas (número e intervalo) ao apontar blocos fortes,
   fracos ou de fadiga acumulada.
+- resumo_semanal inclui rampa média por semana (CTL/sem): >8 agressiva |
+  4-8 acelerada | 0-4 sustentável | <0 descarga. Use para identificar
+  blocos de construção, platô e descarga — e cruze com HRV/sono da mesma
+  semana para julgar se a construção foi absorvida.
 - Priorize conclusão sobre descrição. Cada insight aparece uma vez.
 
 ESTRUTURA:
@@ -1396,6 +1416,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "fitness_ctl": round(ultimo.get("ctl") or 0, 1),
         "fadiga_atl": round(ultimo.get("atl") or 0, 1),
         "forma_tsb": round((ultimo.get("ctl") or 0) - (ultimo.get("atl") or 0), 1),
+        "ramp_rate": round(ultimo.get("rampRate"), 1) if ultimo.get("rampRate") is not None else None,
         "vo2max": ultimo.get("vo2max"),
         "ftp": ultimo.get("ftp"),
         "ftp_wkg": ultimo.get("ftp_wkg"),
@@ -1436,6 +1457,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "sono_h": round(w.get("sleepSecs") / 3600, 1) if w.get("sleepSecs") else None,
             "stress": w.get("avgStress"),
             "body_battery": w.get("bodyBattery"),
+            "ramp": w.get("rampRate"),
         })
 
     # V19.1: status de wellness (7d vs 28d) ancorado no FIM do período
@@ -1646,6 +1668,7 @@ def formatar_metricas(d):
     linhas.append(f"CTL / Fitness: {valor(cond.get('fitness_ctl'))}")
     linhas.append(f"ATL / Fadiga: {valor(cond.get('fadiga_atl'))}")
     linhas.append(f"TSB / Forma: {valor(cond.get('forma_tsb'))}")
+    linhas.append(f"Rampa (CTL/sem): {valor(cond.get('ramp_rate'))}")
     linhas.append(f"Tendência fitness: {valor(cond.get('tendencia_fitness'))}")
     linhas.append(f"VO2max: {valor(cond.get('vo2max'))}")
     linhas.append(f"FTP bike: {valor(cond.get('ftp') or ftp_treino, ' W')}")
@@ -1810,7 +1833,7 @@ def _semana_vazia():
     return {
         "sessoes": 0, "carga": 0, "dur_min": 0,
         "corrida_km": 0, "bike_km": 0, "natacao_m": 0, "forca_sessoes": 0,
-        "_hrv": [], "_rhr": [], "_sono": [], "_stress": [],
+        "_hrv": [], "_rhr": [], "_sono": [], "_stress": [], "_ramp": [],
     }
 
 
@@ -1865,6 +1888,8 @@ def agregar_semanal(d):
             s["_sono"].append(w["sono_h"])
         if w.get("stress") is not None:
             s["_stress"].append(w["stress"])
+        if w.get("ramp") is not None:
+            s["_ramp"].append(w["ramp"])
 
     if not semanas:
         return None
@@ -1893,6 +1918,7 @@ def agregar_semanal(d):
             "rhr": media_lista(s["_rhr"]),
             "sono_h": media_lista(s["_sono"]),
             "stress": media_lista(s["_stress"]),
+            "rampa": media_lista(s["_ramp"]),
         }))
 
     return resumo
@@ -1986,6 +2012,7 @@ def filtrar_dados_para_analise(d, dominios):
             "fitness_ctl": cond.get("fitness_ctl"),
             "fadiga_atl": cond.get("fadiga_atl"),
             "forma_tsb": cond.get("forma_tsb"),
+            "ramp_rate": cond.get("ramp_rate"),
             "acwr": ind.get("acwr"),
             "carga_total": totais.get("carga_total"),
             "total_sessoes": totais.get("total_sessoes"),
@@ -2145,6 +2172,26 @@ def calcular_prontidao(d):
         else:
             positivos.append(f"TSB {tsb}")
 
+    # --- V22: Rampa (variação de CTL/semana, direto da API) ---
+    # Regra de ouro: rampa alta só é problema quando o corpo não acompanha.
+    ramp = cond.get("ramp_rate")
+    hrv_ruim = hrv_st.get("status") in ("baixo", "desequilibrado")
+
+    if ramp is not None:
+        if ramp > 8:
+            pontos += 2
+            motivos.append(f"rampa {ramp}/sem (subida agressiva de carga)")
+        elif ramp > 4:
+            if hrv_ruim:
+                pontos += 1
+                motivos.append(f"rampa {ramp}/sem com HRV abaixo do baseline (construindo sem absorver)")
+            else:
+                positivos.append(f"rampa {ramp}/sem (construção acelerada, recuperação acompanhando)")
+        elif ramp >= 0:
+            positivos.append(f"rampa {ramp}/sem (progressão sustentável)")
+        else:
+            positivos.append(f"rampa {ramp}/sem (descarregando — bom para absorver)")
+
     # --- Monotonia ---
     mono = ind.get("monotonia_carga")
     if mono is not None and mono > 2.0:
@@ -2211,9 +2258,13 @@ def calcular_prontidao(d):
         "avisos": avisos,
         "dados_ate": dados_ate,
         "contexto": limpar_vazios({
-            "acwr": acwr,
+            "ctl": cond.get("fitness_ctl"),
+            "atl": cond.get("fadiga_atl"),
             "tsb": tsb,
+            "rampa": ramp,
+            "acwr": acwr,
             "monotonia": mono,
+            "strain": ind.get("strain"),
             "carga_ontem": carga_ontem or None,
             "carga_media_dia": carga_dia or None,
         }),
@@ -2241,20 +2292,48 @@ def formatar_prontidao(p):
     linhas.append("Ação:")
     linhas.append(p["acao"])
 
+    # V21.2: painel de carga estruturado
     ctx = p.get("contexto") or {}
     if ctx:
-        partes = []
+        linhas.append("")
+        linhas.append("Painel de carga:")
+
+        ctl = ctx.get("ctl")
+        atl = ctx.get("atl")
+        tsb = ctx.get("tsb")
+        if ctl is not None:
+            linhas.append(f"  Aptidão (CTL): {ctl}")
+        if atl is not None:
+            linhas.append(f"  Fadiga   (ATL): {atl}")
+        if tsb is not None:
+            estado_tsb = "fresco" if tsb > 5 else ("carregado" if tsb < -10 else "neutro")
+            linhas.append(f"  Forma    (TSB): {tsb}  [{estado_tsb}]")
+        ramp = ctx.get("rampa")
+        if ramp is not None:
+            zona_ramp = (
+                "agressiva" if ramp > 8
+                else "acelerada" if ramp > 4
+                else "sustentável" if ramp >= 0
+                else "descarregando"
+            )
+            linhas.append(f"  Rampa: {ramp}/sem  [{zona_ramp}]")
         if ctx.get("acwr") is not None:
-            partes.append(f"ACWR {ctx['acwr']}")
-        if ctx.get("tsb") is not None:
-            partes.append(f"TSB {ctx['tsb']}")
-        if ctx.get("monotonia") is not None:
-            partes.append(f"monotonia {ctx['monotonia']}")
-        if ctx.get("carga_ontem") is not None:
-            partes.append(f"carga ontem {ctx['carga_ontem']}")
-        if partes:
+            linhas.append(f"  ACWR: {ctx['acwr']}")
+
+        strain = ctx.get("strain")
+        mono = ctx.get("monotonia")
+        if strain is not None or mono is not None:
             linhas.append("")
-            linhas.append("Contexto: " + " | ".join(partes))
+            linhas.append("Qualidade da carga:")
+        if mono is not None:
+            zona_mono = "boa variação" if mono < 1.5 else ("atenção" if mono <= 2.0 else "uniforme demais")
+            linhas.append(f"  Monotonia: {mono}  [{zona_mono}]")
+        if strain is not None:
+            linhas.append(f"  Strain: {strain}")
+
+        if ctx.get("carga_ontem") is not None:
+            ref = f" (média/dia: {ctx['carga_media_dia']})" if ctx.get("carga_media_dia") else ""
+            linhas.append(f"  Carga ontem: {ctx['carga_ontem']}{ref}")
 
     # V21.1: transparência sobre frescura do dado
     if p.get("avisos"):
