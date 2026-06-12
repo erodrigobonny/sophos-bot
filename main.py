@@ -1,6 +1,17 @@
-# Sophos V22.1 – main.py
+# Sophos V22.2 – main.py
 #
-# Mudanças vs V22 (tudo anterior mantido):
+# Mudanças vs V22.1 (tudo anterior mantido):
+# 19. (V22.2) Estado operacional reutilizável: /prontidao e /relatorio
+#     salvam estado estruturado em Firebase estado_atual/{tipo} (chave que
+#     se SOBRESCREVE, não lista) + uma linha curta no contexto linear.
+# 20. (V22.2) Em mensagem comum, o estado de prontidão é injetado no
+#     prompt APENAS quando há intenção de decisão de treino (gatilhos
+#     fechados: "sigo o plano", "posso treinar", "algum risco"...), com
+#     aviso de desatualização se o estado não for de hoje. Fallback para
+#     o último relatório se não houver prontidão.
+# 21. (V22.2) /decidir fica para depois que o estado provar valor em uso.
+#
+# Mudanças vs V22:
 # 18. (V22.1) Strain classificado no /prontidao: <80 baixo | 80-120
 #     moderado | 120-180 alto | >180 muito alto, mais linha "Leitura"
 #     que cruza strain com monotonia (carga ok + variação baixa é o
@@ -674,6 +685,30 @@ def recuperar_contexto(user_id, limite=HISTORY_LIMIT):
             partes.append(f"{rotulo}: {item['texto']}")
 
     return "\n".join(partes)
+
+def salvar_estado_atual(user_id, tipo, dados):
+    """V22.2: estado operacional reutilizável. Chave que se SOBRESCREVE
+    (não é lista crescente): /prontidao e /relatorio deixam rastro
+    estruturado que mensagens comuns consultam quando a pergunta pede
+    decisão de treino. Falha silenciosa: não quebra o comando."""
+    try:
+        ref.child(str(user_id)).child("estado_atual").child(tipo).set({
+            "data_local": hoje_local().isoformat(),
+            "atualizado_em": agora_iso(),
+            "dados": dados,
+        })
+    except Exception as e:
+        print(f"Erro ao salvar estado_atual/{tipo}:", e)
+
+
+def recuperar_estado_atual(user_id, tipo):
+    """V22.2: lê o estado operacional salvo. None se ausente ou erro."""
+    try:
+        return ref.child(str(user_id)).child("estado_atual").child(tipo).get()
+    except Exception as e:
+        print(f"Erro ao ler estado_atual/{tipo}:", e)
+        return None
+
 
 def salvar_memoria_relativa(user_id, chave, valor):
     ref.child(str(user_id)).child("memoria").child(chave).set(valor)
@@ -2402,6 +2437,22 @@ async def prontidao_command(update, context):
     p = calcular_prontidao(d)
     texto = formatar_prontidao(p)
 
+    # V22.2: rastro reutilizável — estado estruturado + UMA linha no contexto
+    pctx = p.get("contexto") or {}
+    salvar_estado_atual(uid, "prontidao", p)
+    try:
+        salvar_contexto(
+            uid,
+            (
+                f"Prontidão de hoje: {p.get('emoji')} {p.get('rotulo')} ({p.get('pontos')} pts). "
+                f"TSB {pctx.get('tsb')}, ACWR {pctx.get('acwr')}, rampa {pctx.get('rampa')}, "
+                f"monotonia {pctx.get('monotonia')}, strain {pctx.get('strain')}."
+            ),
+            papel="sophos"
+        )
+    except Exception as e:
+        print("Erro ao salvar linha de prontidão no contexto:", e)
+
     if quer_ia:
         try:
             resumo_json = json.dumps(p, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -2493,6 +2544,35 @@ async def relatorio_command(update, context):
     )
 
     context.user_data["ultima_resposta"] = resposta
+
+    # V22.2: estado reutilizável do relatório — COMPACTO de propósito
+    # (condicionamento + alerta + baseline + 600 chars de resumo; nada de
+    # indicadores inteiros, que inflariam a injeção no chat).
+    cond_rel = d.get("condicionamento") or {}
+    alerta_rel = ((d.get("indicadores") or {}).get("alerta_recuperacao") or {})
+    salvar_estado_atual(uid, "ultimo_relatorio", {
+        "periodo": d.get("periodo"),
+        "dias": d.get("dias"),
+        "condicionamento": cond_rel,
+        "alerta_recuperacao": {
+            "nivel": alerta_rel.get("nivel"),
+            "sinais": alerta_rel.get("sinais"),
+        },
+        "baseline": d.get("baseline"),
+        "resumo_texto": resposta[:600],
+    })
+    try:
+        salvar_contexto(
+            uid,
+            (
+                f"Relatório {d.get('periodo')} gerado: CTL {cond_rel.get('fitness_ctl')}, "
+                f"TSB {cond_rel.get('forma_tsb')}, rampa {cond_rel.get('ramp_rate')}, "
+                f"alerta de recuperação {alerta_rel.get('nivel')}."
+            ),
+            papel="sophos"
+        )
+    except Exception as e:
+        print("Erro ao salvar linha do relatório no contexto:", e)
 
     await enviar_texto_longo(
         context,
@@ -2905,6 +2985,25 @@ def deve_buscar_memoria(texto: str) -> bool:
 
     return any(g in t for g in gatilhos)
 
+# V22.2: gatilhos FECHADOS de intenção de decisão — não tema. Palavras como
+# "treino", "bike", "z2" disparariam em quase toda mensagem de um triatleta.
+# O que importa é a pergunta pedir um veredito sobre treinar ou não.
+# Ressalva conhecida: "vale a pena" pode dar falso positivo em pergunta de
+# compra; custo é ~300 tokens de bloco irrelevante — remova se incomodar.
+GATILHOS_DECISAO_TREINO = [
+    "sigo o plano", "faco mesmo", "devo fazer", "vale a pena",
+    "algum risco", "posso treinar", "to pronto", "estou pronto",
+    "reduzo", "corto", "cancelo", "mantenho", "ajusto",
+    "amanha tenho", "hoje tenho", "consigo fazer", "aguento",
+    "devo treinar", "treino ou descanso",
+]
+
+
+def pergunta_de_decisao_treino(texto):
+    t = remover_acentos((texto or "").lower())
+    return any(g in t for g in GATILHOS_DECISAO_TREINO)
+
+
 async def processar_texto(user_id, texto, update, context):
     inicializar_usuario(user_id)
 
@@ -2928,6 +3027,34 @@ async def processar_texto(user_id, texto, update, context):
         estilo_dinamico = "Adote tom mais explicativo e didático."
 
     base = recuperar_contexto(user_id)
+
+    # V22.2: estado operacional só quando a pergunta pede DECISÃO de treino.
+    # Prontidão tem prioridade (dados operacionais do dia); relatório é fallback.
+    if pergunta_de_decisao_treino(texto_original):
+        estado = recuperar_estado_atual(user_id, "prontidao")
+        origem = "prontidão"
+
+        if not estado:
+            estado = recuperar_estado_atual(user_id, "ultimo_relatorio")
+            origem = "último relatório"
+
+        if estado and estado.get("dados"):
+            aviso_data = ""
+            if estado.get("data_local") != hoje_local().isoformat():
+                aviso_data = (
+                    f" (ATENÇÃO: calculado em {estado.get('data_local')}, "
+                    "pode estar desatualizado — diga isso ao usuário se for relevante)"
+                )
+
+            base += (
+                f"\n\nEstado atual ({origem}) para decisões de treino{aviso_data}:\n"
+                + json.dumps(
+                    estado.get("dados"),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    default=str
+                )[:2500]
+            )
 
     sem_ctx = []
     if deve_buscar_memoria(texto_original):
