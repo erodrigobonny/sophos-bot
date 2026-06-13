@@ -1,6 +1,39 @@
-# Sophos V22.2 – main.py
+# Sophos V23.1 – main.py
 #
-# Mudanças vs V22.1 (tudo anterior mantido):
+# Mudanças vs V23 (tudo anterior mantido):
+# 23. (V23.1) Correções de coerência da carga efetiva:
+#     - treino_linha (/metricas) mostra a carga efetiva e, se corrigida,
+#       exibe "[corrigida; original X]" — antes a lista mostrava a bruta
+#       enquanto o topo já avisava da correção (contradição visual).
+#     - estado salvo da prontidão carrega "cargas_corrigidas", para a
+#       conversa de decisão saber que houve correção por sensor.
+#
+# ALCANCE DA CORREÇÃO DE CARGA (importante, não criar falsa sensação):
+#   A V23 corrige os indicadores que o PRÓPRIO Sophos calcula a partir da
+#   carga dos treinos: carga_total, carga_por_dia/sessão, monotonia, strain,
+#   distribuição por modalidade, maior treino, resumo semanal, outliers e
+#   carga de ontem na prontidão.
+#   NÃO reescreve CTL, ATL, TSB, ramp_rate e ACWR — esses vêm PRONTOS do
+#   wellness do Intervals e podem refletir a potência quebrada até o
+#   Intervals recalcular. Logo, ver "carga corrigida alta hoje" + "TSB +3"
+#   no mesmo relatório não é contradição: é correção local vs fitness ainda
+#   não recalculado na origem.
+#
+# Mudanças vs V22.2:
+# 22. (V23) Carga efetiva + correção de sensor inconsistente (SÓ BIKE):
+#     quando a potência da bike falha (bateria/calibração) o Intervals
+#     calcula icu_training_load a partir de potência fantasma, gerando
+#     carga absurdamente baixa para um pedal cardiovascularmente pesado.
+#     carga_efetiva_treino() detecta a aberração (carga < 0.5*hr_load,
+#     com guardas grossas: bike + duração ≥30min + hr_load ≥50 + potência
+#     ausente/baixa) e usa hr_load como carga real, preservando o dado
+#     bruto. TODOS os cálculos (carga_total, indicadores, cargas_diárias,
+#     agregação, distribuição, maior treino) passam a ler carga_efetiva.
+#     Correção é automática mas SINALIZADA: aviso visível em /metricas,
+#     /analise, /relatorio e /prontidao. Limiar grosseiro: só aberração
+#     dispara — variação fisiológica normal (calor, cafeína) não corrige.
+#
+# Mudanças vs V22.1:
 # 19. (V22.2) Estado operacional reutilizável: /prontidao e /relatorio
 #     salvam estado estruturado em Firebase estado_atual/{tipo} (chave que
 #     se SOBRESCREVE, não lista) + uma linha curta no contexto linear.
@@ -612,6 +645,86 @@ def interpretar_pedido_analise(texto):
 
     return dias, inicio, fim, dominios
 
+def _carga(t):
+    """V23: carga que o Sophos usa nos cálculos — efetiva se corrigida,
+    senão a bruta do Intervals."""
+    ce = t.get("carga_efetiva")
+    return (ce if ce is not None else t.get("carga_treino")) or 0
+
+
+def carga_efetiva_treino(t):
+    """V23: decide a carga real de um treino quando o sensor de potência
+    falha. SÓ se aplica a BIKE (única modalidade com medidor de potência
+    no setup do usuário). Quando a potência da bike descarrega no meio do
+    treino, o Intervals calcula icu_training_load sobre potência fantasma
+    e devolve carga absurdamente baixa — mas hr_load (carga por FC) continua
+    honesto. Regra grosseira e conservadora: só aberração dispara.
+    Preserva o dado bruto; devolve campos auxiliares para o treino."""
+    carga = t.get("carga_treino")
+    hr_load = t.get("hr_load")
+    potencia = t.get("potencia_w")
+    dur = t.get("dur_min") or 0
+    tipo = (t.get("tipo") or "").lower()
+
+    eh_bike = "ride" in tipo or "bike" in tipo
+
+    resultado = {
+        "carga_efetiva": carga,
+        "carga_corrigida": False,
+        "motivo_carga_corrigida": None,
+        "fonte_carga": "icu_training_load",
+    }
+
+    # Carga ausente mas hr_load presente (QUALQUER modalidade): usa hr_load.
+    # Isto é fallback de dado faltante, NÃO correção de sensor de potência
+    # (que é exclusiva de bike). Razoável usar FC quando não há carga alguma.
+    if carga is None:
+        if hr_load is not None:
+            resultado.update({
+                "carga_efetiva": hr_load,
+                "carga_corrigida": True,
+                "motivo_carga_corrigida": "carga original ausente; usando hr_load",
+                "fonte_carga": "hr_load",
+            })
+        return resultado
+
+    # Correção de sensor: SÓ bike, e só com guardas grossas satisfeitas
+    if (
+        eh_bike
+        and hr_load is not None
+        and dur >= 30
+        and hr_load >= 50
+        and carga < hr_load * 0.5
+        and (potencia is None or potencia < 50)
+    ):
+        resultado.update({
+            "carga_efetiva": hr_load,
+            "carga_corrigida": True,
+            "motivo_carga_corrigida": (
+                f"potência inconsistente vs FC (carga {round(carga)} vs hr_load "
+                f"{round(hr_load)}, potência {round(potencia) if potencia else 'ausente'} W); "
+                "usando carga por FC"
+            ),
+            "fonte_carga": "hr_load",
+        })
+
+    return resultado
+
+
+def avisos_carga_corrigida(treinos):
+    """V23: monta a lista de avisos de correção para exibir ao usuário."""
+    avisos = []
+    for t in treinos:
+        if t.get("carga_corrigida"):
+            nome = t.get("nome") or t.get("tipo") or "treino"
+            data = t.get("data") or "-"
+            avisos.append(
+                f"{data} {nome}: carga {round(t.get('carga_treino') or 0)} → "
+                f"{round(t.get('carga_efetiva') or 0)} (via FC)"
+            )
+    return avisos
+
+
 def cargas_diarias(treinos):
     """Soma de carga por dia — base para correlações tipo sono x carga."""
     cargas = {}
@@ -619,7 +732,7 @@ def cargas_diarias(treinos):
         data = t.get("data")
         if not data:
             continue
-        cargas[data] = round(cargas.get(data, 0) + (t.get("carga_treino") or 0))
+        cargas[data] = round(cargas.get(data, 0) + _carga(t))
     return cargas
 
 def formatar_pace(min_decimais):
@@ -939,7 +1052,7 @@ def calcular_indicadores(d, baseline=None):
         else:
             grupo = "outros"
 
-        carga_t = t.get("carga_treino") or 0
+        carga_t = _carga(t)
         carga_por_modalidade[grupo] = carga_por_modalidade.get(grupo, 0) + carga_t
 
     distribuicao_carga_pct = {
@@ -947,7 +1060,7 @@ def calcular_indicadores(d, baseline=None):
         for k, v in carga_por_modalidade.items()
     }
 
-    maior_carga = max(treinos, key=lambda t: t.get("carga_treino") or 0, default=None)
+    maior_carga = max(treinos, key=lambda t: _carga(t), default=None)
     maior_duracao = max(treinos, key=lambda t: t.get("dur_min") or 0, default=None)
     maior_distancia = max(treinos, key=lambda t: t.get("dist_km") or 0, default=None)
 
@@ -961,7 +1074,8 @@ def calcular_indicadores(d, baseline=None):
             "data": t.get("data"),
             "dist_km": t.get("dist_km"),
             "dur_min": t.get("dur_min"),
-            "carga": t.get("carga_treino"),
+            "carga": _carga(t) if t.get("carga_efetiva") is not None else t.get("carga_treino"),
+            "carga_corrigida": t.get("carga_corrigida") or None,
             "fc_med": t.get("fc_med"),
         }
 
@@ -1033,7 +1147,7 @@ def calcular_indicadores(d, baseline=None):
         if not data:
             continue
 
-        cargas_por_dia[data] = cargas_por_dia.get(data, 0) + (t.get("carga_treino") or 0)
+        cargas_por_dia[data] = cargas_por_dia.get(data, 0) + _carga(t)
 
     cargas_lista = list(cargas_por_dia.values())
 
@@ -1129,7 +1243,7 @@ def calcular_indicadores(d, baseline=None):
             elif grupo == "forca" and ("strength" in tipo or "weight" in tipo):
                 treinos_grupo.append(t)
 
-        maior = max(treinos_grupo, key=lambda x: x.get("carga_treino") or 0, default=None)
+        maior = max(treinos_grupo, key=lambda x: _carga(x), default=None)
         maior_carga_por_modalidade[grupo] = treino_resumo(maior)
 
     return {
@@ -1354,6 +1468,11 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
 
         })
 
+    # V23: aplica correção de carga (só bike) a cada treino. A partir daqui
+    # carga_efetiva existe em todos os treinos e os cálculos leem dela.
+    for t in treinos:
+        t.update(carga_efetiva_treino(t))
+
     def soma_tipo(chave):
         return round(sum(
             (t.get("dist_km") or 0) * 1000 for t in treinos
@@ -1365,7 +1484,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "bike_km": round(soma_tipo("ride") / 1000, 1),
         "corrida_km": round(soma_tipo("run") / 1000, 1),
         "calorias": round(sum(t.get("cal") or 0 for t in treinos)),
-        "carga_total": round(sum(t.get("carga_treino") or 0 for t in treinos)),
+        "carga_total": round(sum((t.get("carga_efetiva") if t.get("carga_efetiva") is not None else t.get("carga_treino")) or 0 for t in treinos)),
         "total_sessoes": len(treinos),
     }
 
@@ -1562,7 +1681,15 @@ def treino_linha(t):
     if t.get("dur_min"):
         partes.append(f"{t.get('dur_min')} min")
 
-    if t.get("carga_treino") is not None:
+    if t.get("carga_efetiva") is not None:
+        if t.get("carga_corrigida"):
+            partes.append(
+                f"carga {round(t.get('carga_efetiva'))} "
+                f"[corrigida; original {round(t.get('carga_treino') or 0)}]"
+            )
+        else:
+            partes.append(f"carga {t.get('carga_efetiva')}")
+    elif t.get("carga_treino") is not None:
         partes.append(f"carga {t.get('carga_treino')}")
 
     if t.get("trimp") is not None:
@@ -1695,6 +1822,15 @@ def formatar_metricas(d):
     linhas.append("📊 MÉTRICAS DE PERFORMANCE")
     linhas.append(f"Período: {d.get('periodo')}")
     linhas.append(f"Dias: {d.get('dias')}")
+
+    # V23: aviso de correção de carga (sensor de potência inconsistente)
+    avisos_carga = avisos_carga_corrigida(treinos)
+    if avisos_carga:
+        linhas.append("")
+        linhas.append("⚠️ Carga corrigida via FC (potência inconsistente):")
+        for a in avisos_carga:
+            linhas.append(f"• {a}")
+
     linhas.append("")
 
     linhas.append("1. TOTAIS")
@@ -1821,6 +1957,8 @@ def treino_para_payload(t):
         "potencia_w": t.get("potencia_w"),
         "cadencia": round(t.get("cadencia"), 1) if t.get("cadencia") is not None else None,
         "carga_treino": t.get("carga_treino"),
+        "carga_efetiva": t.get("carga_efetiva") if t.get("carga_corrigida") else None,
+        "carga_corrigida": t.get("carga_corrigida") or None,
         "intensidade": t.get("intensidade"),
         "trimp": t.get("trimp"),
         "ftp": t.get("ftp"),
@@ -1903,7 +2041,7 @@ def agregar_semanal(d):
 
         s = semanas.setdefault(b, _semana_vazia())
         s["sessoes"] += 1
-        s["carga"] += t.get("carga_treino") or 0
+        s["carga"] += _carga(t)
         s["dur_min"] += t.get("dur_min") or 0
 
         tipo = (t.get("tipo") or "").lower()
@@ -2011,7 +2149,7 @@ def preparar_dados_relatorio_historico(d):
     treinos = d.get("treinos", [])
     outliers = sorted(
         treinos,
-        key=lambda t: t.get("carga_treino") or 0,
+        key=lambda t: _carga(t),
         reverse=True
     )[:5]
 
@@ -2243,7 +2381,7 @@ def calcular_prontidao(d):
     # --- Treino de ontem ---
     ontem = (hoje_local() - timedelta(days=1)).isoformat()  # V21.1: data local
     carga_ontem = round(sum(
-        t.get("carga_treino") or 0 for t in treinos if t.get("data") == ontem
+        _carga(t) for t in treinos if t.get("data") == ontem
     ))
     carga_dia = ind.get("carga_por_dia") or 0
 
@@ -2437,6 +2575,16 @@ async def prontidao_command(update, context):
     p = calcular_prontidao(d)
     texto = formatar_prontidao(p)
 
+    # V23: se a carga de algum treino foi corrigida no período, sinaliza
+    _avisos_c = avisos_carga_corrigida(d.get("treinos", []))
+    if _avisos_c:
+        texto += "\n\n⚠️ Carga corrigida via FC (potência inconsistente):\n" + "\n".join(
+            f"• {a}" for a in _avisos_c
+        )
+        # V23.1: leva a transparência para o estado salvo, então a conversa
+        # de decisão ("sigo o plano?") também sabe que houve correção.
+        p["cargas_corrigidas"] = _avisos_c
+
     # V22.2: rastro reutilizável — estado estruturado + UMA linha no contexto
     pctx = p.get("contexto") or {}
     salvar_estado_atual(uid, "prontidao", p)
@@ -2574,10 +2722,19 @@ async def relatorio_command(update, context):
     except Exception as e:
         print("Erro ao salvar linha do relatório no contexto:", e)
 
+    # V23: prefixo de aviso se houve correção de carga no período
+    _avisos_c = avisos_carga_corrigida(d.get("treinos", []))
+    prefixo_aviso = ""
+    if _avisos_c:
+        prefixo_aviso = (
+            "⚠️ Carga corrigida via FC (potência inconsistente): "
+            + "; ".join(_avisos_c) + "\n\n"
+        )
+
     await enviar_texto_longo(
         context,
         update.effective_chat.id,
-        "📊 Relatório de Performance:\n\n" + resposta,
+        "📊 Relatório de Performance:\n\n" + prefixo_aviso + resposta,
         reply_markup=marcadores_feedback("relatorio")
     )
 
@@ -2658,10 +2815,19 @@ async def analise_command(update, context):
 
     context.user_data["ultima_resposta"] = resposta
 
+    # V23: aviso de correção de carga, se houver
+    _avisos_c = avisos_carga_corrigida(d.get("treinos", []))
+    prefixo_aviso = ""
+    if _avisos_c:
+        prefixo_aviso = (
+            "⚠️ Carga corrigida via FC (potência inconsistente): "
+            + "; ".join(_avisos_c) + "\n\n"
+        )
+
     await enviar_texto_longo(
         context,
         update.effective_chat.id,
-        f"🔍 Análise focada ({nomes}):\n\n" + resposta,
+        f"🔍 Análise focada ({nomes}):\n\n" + prefixo_aviso + resposta,
         reply_markup=marcadores_feedback("analise")
     )
 
