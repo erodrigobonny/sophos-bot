@@ -1,6 +1,19 @@
-# Sophos V23.1 – main.py
+# Sophos V23.2 – main.py
 #
-# Mudanças vs V23 (tudo anterior mantido):
+# Mudanças vs V23.1 (tudo anterior mantido):
+# 24. (V23.2) Três ajustes de coerência no /prontidao:
+#     - TSB negativo deixa de ser listado como "a favor": entra como
+#       observação neutra (entre -10 e +5) e só vira ponto a favor quando
+#       genuinamente fresco (>+5).
+#     - Leitura do strain casa com a faixa: quando strain ≥120 (alto) E
+#       monotonia ≥2.0, a frase não minimiza mais com "não está explosiva";
+#       pede contraste real (leve de verdade ou descanso ativo).
+#     - Ação contextual por motivo: quando o amarelo/vermelho vem por carga
+#       (treino pesado ontem, monotonia, strain), a ação é específica
+#       ("absorver o pedal de ontem"). Fallback para a ação genérica se o
+#       motivo não casar — sem risco de regressão.
+#
+# Mudanças vs V23:
 # 23. (V23.1) Correções de coerência da carga efetiva:
 #     - treino_linha (/metricas) mostra a carga efetiva e, se corrigida,
 #       exibe "[corrigida; original X]" — antes a lista mostrava a bruta
@@ -2349,8 +2362,10 @@ def calcular_prontidao(d):
         elif tsb < -10:
             pontos += 1
             motivos.append(f"TSB {tsb} (carregado)")
-        else:
-            positivos.append(f"TSB {tsb}")
+        elif tsb > 5:
+            positivos.append(f"TSB {tsb} (fresco)")
+        # V23.2: entre -10 e +5 é neutro — não conta a favor nem contra.
+        # Não entra em positivos para não dar falsa sensação de vantagem.
 
     # --- V22: Rampa (variação de CTL/semana, direto da API) ---
     # Regra de ouro: rampa alta só é problema quando o corpo não acompanha.
@@ -2414,12 +2429,33 @@ def calcular_prontidao(d):
     dados_ate = max(ultimos_dias) if ultimos_dias else None
 
     # --- Classificação ---
+    # V23.2: identifica se o alerta vem de CARGA ou de RECUPERAÇÃO, para
+    # dar ação específica. Inspeciona os motivos já decididos (não recalcula),
+    # então no pior caso cai na ação genérica — sem risco de regressão.
+    motivos_txt = " ".join(motivos).lower()
+    alerta_por_carga = any(
+        chave in motivos_txt
+        for chave in ("treino pesado ontem", "monotonia", "strain", "acwr", "rampa")
+    )
+    alerta_por_recuperacao = any(
+        chave in motivos_txt
+        for chave in ("hrv", "rhr", "sono")
+    )
+
     if pontos >= 5:
         nivel, emoji, rotulo = "vermelho", "🔴", "Reduzir"
-        acao = "Reduzir intensidade hoje. Descanso ativo, mobilidade ou off. Prioridade número um: dormir bem."
+        if alerta_por_recuperacao:
+            acao = "Reduzir intensidade hoje. Sinais de recuperação comprometida: descanso ativo ou off, e prioridade número um é dormir bem."
+        else:
+            acao = "Reduzir intensidade hoje. Descanso ativo, mobilidade ou off. Prioridade número um: dormir bem."
     elif pontos >= 2:
         nivel, emoji, rotulo = "amarelo", "🟡", "Atenção"
-        acao = "Treinar leve. Manter Z2, evitar tiros, séries pesadas e volume longo."
+        if alerta_por_carga and not alerta_por_recuperacao:
+            acao = "Treinar leve. Hoje o objetivo é absorver a carga recente: Z1/Z2 baixo, sem tiros, sem força pesada e sem volume longo."
+        elif alerta_por_recuperacao:
+            acao = "Treinar leve e priorizar recuperação. Z2 baixo, evitar tiros e volume longo; cuidar do sono hoje."
+        else:
+            acao = "Treinar leve. Manter Z2, evitar tiros, séries pesadas e volume longo."
     else:
         nivel, emoji, rotulo = "verde", "🟢", "Treinar normal"
         acao = "Sinal verde. Siga o plano; se houver intensidade programada, hoje é dia."
@@ -2524,8 +2560,15 @@ def formatar_prontidao(p):
 
             linhas.append(f"  Strain: {strain}  [{zona_strain}]")
 
-            # Leitura: o combo mais traiçoeiro é carga ok + variação baixa
-            if mono is not None and mono >= 2.0 and strain >= 80:
+            # Leitura: o combo mais traiçoeiro é carga ok + variação baixa.
+            # V23.2: quando o strain já está alto (>=120), a frase não
+            # minimiza mais com "não está explosiva" — pede contraste real.
+            if mono is not None and mono >= 2.0 and strain >= 120:
+                linhas.append(
+                    "  Leitura: carga acumulada já está alta e a variação está baixa; "
+                    "hoje pede contraste real — leve de verdade ou descanso ativo."
+                )
+            elif mono is not None and mono >= 2.0 and strain >= 80:
                 linhas.append(
                     "  Leitura: carga não está explosiva, mas a variação está baixa; "
                     "alterne melhor dias leves e fortes."
