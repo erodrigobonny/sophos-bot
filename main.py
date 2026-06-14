@@ -1,6 +1,31 @@
-# Sophos V23.2 – main.py
+# Sophos V24.1 – main.py
 #
-# Mudanças vs V23.1 (tudo anterior mantido):
+# Mudanças vs V24:
+# 26. (V24.1) Correções no /combustivel após auditoria:
+#     - Detecção por PALAVRA INTEIRA (regex \b) em vez de substring. Mata
+#       o falso positivo "mar" em "maratona" (que classificava como natação)
+#       e toda a classe de bugs do tipo (z2 em z20, etc). "mar" solto virou
+#       "aguas abertas"/"mar aberto".
+#     - Total da sessão: além de g/h, mostra o total estimado de carbo,
+#       fluido e sódio para a duração informada (sem conta mental no treino).
+#     - Cafeína mais conservadora: só se já tolera, com alerta para sono
+#       ruim/HRV baixo/fim de dia.
+#     - Hidratação curta com faixa mais ampla (300-750 ml) — 500 podia ser
+#       demais em treino curto.
+#
+# Mudanças vs V23.2:
+# 25. (V24) /combustivel <sessão> — estratégia de fueling para uma sessão
+#     específica (ex: "/combustivel sábado pedal 3h", "/combustivel corrida
+#     90min forte"). 100% Python, zero chamada a modelo — sem risco de
+#     "opinião ruim" e sem tocar em CTL/ATL/TSB/strain/carga. Extrai
+#     modalidade (bike/corrida/natação/brick) e duração do texto; calcula
+#     faixas de carboidrato, hidratação, sódio e cafeína por duração e
+#     intensidade. Assume calor/umidade do Nordeste por padrão, com aviso
+#     explícito e ajustável. Linguagem de performance, não dieta — sem
+#     calorias, sem foco em peso/emagrecimento. /auditar_plano fica para
+#     depois do período de uso real (risco médio/alto: encosta no núcleo).
+#
+# Mudanças vs V23.1:
 # 24. (V23.2) Três ajustes de coerência no /prontidao:
 #     - TSB negativo deixa de ser listado como "a favor": entra como
 #       observação neutra (entre -10 e +5) e só vira ponto a favor quando
@@ -2594,6 +2619,297 @@ def formatar_prontidao(p):
     return "\n".join(linhas)
 
 
+# V24: dicionários do parser do /combustivel
+MAPA_MODALIDADE_COMBUSTIVEL = {
+    "bike": ["bike", "pedal", "ciclismo", "ride", "mtb", "spinning"],
+    "corrida": ["corrida", "correr", "rodagem", "run"],
+    "natacao": ["natacao", "nadar", "nado", "piscina", "swim", "aguas abertas", "mar aberto"],
+}
+
+PALAVRAS_BRICK = ["brick", "triatlo", "triathlon", "prova", "simulado"]
+
+INTENSIDADE_ALTA_KW = [
+    "forte", "intenso", "tiros", "intervalado", "limiar", "vo2",
+    "z4", "z5", "prova", "simulado", "maxima"
+]
+INTENSIDADE_LEVE_KW = ["leve", "regenerativo", "z1", "facil", "recovery", "soltura"]
+
+
+def extrair_duracao_min(texto):
+    """V24: extrai duração total em minutos de frases livres.
+    Cobre 'Xh', 'Xh30', 'Xh30min', '1,5h', 'X min', e soma múltiplas
+    ocorrências (útil para brick: 'bike 1h + corrida 30min')."""
+    t = (texto or "").lower()
+    total = 0
+    achou = False
+
+    padrao_h = re.compile(
+        r'(\d+(?:[.,]\d+)?)\s*h(?:oras?)?\s*(?:e\s*)?(\d+)?\s*(?:min(?:utos)?)?'
+    )
+
+    def repl(m):
+        nonlocal total, achou
+        horas = float(m.group(1).replace(",", "."))
+        mins = int(m.group(2)) if m.group(2) else 0
+        total += int(round(horas * 60)) + mins
+        achou = True
+        return " "
+
+    restante = padrao_h.sub(repl, t)
+
+    for m in re.finditer(r'(\d+)\s*min(?:utos)?', restante):
+        total += int(m.group(1))
+        achou = True
+
+    if not achou:
+        return None
+
+    return min(max(total, 1), 600)  # proteção: 1min a 10h
+
+
+def _contem_palavra(texto_norm, termo):
+    """V24.1: casa termo como palavra/expressão inteira, não substring.
+    Evita falsos positivos como 'mar' em 'maratona' ou 'z2' em 'z20'.
+    O termo pode ter espaços (ex: 'aguas abertas')."""
+    termo_norm = remover_acentos(termo.lower())
+    return re.search(r'\b' + re.escape(termo_norm) + r'\b', texto_norm) is not None
+
+
+def detectar_modalidade_combustivel(texto):
+    t = remover_acentos((texto or "").lower())
+
+    encontradas = [
+        mod for mod, palavras in MAPA_MODALIDADE_COMBUSTIVEL.items()
+        if any(_contem_palavra(t, p) for p in palavras)
+    ]
+
+    if len(encontradas) >= 2:
+        return "brick"
+    if encontradas:
+        return encontradas[0]
+    if any(_contem_palavra(t, p) for p in PALAVRAS_BRICK):
+        return "brick"
+
+    return "geral"
+
+
+def detectar_intensidade_combustivel(texto):
+    t = remover_acentos((texto or "").lower())
+
+    if any(_contem_palavra(t, k) for k in INTENSIDADE_ALTA_KW):
+        return "alta"
+    if any(_contem_palavra(t, k) for k in INTENSIDADE_LEVE_KW):
+        return "leve"
+
+    return "moderada"
+
+
+def formatar_duracao(min_total):
+    h, m = divmod(int(min_total), 60)
+    if h and m:
+        return f"{h}h{m:02d}min"
+    if h:
+        return f"{h}h"
+    return f"{m}min"
+
+
+NOMES_MODALIDADE_COMBUSTIVEL = {
+    "bike": "Bike", "corrida": "Corrida", "natacao": "Natação",
+    "brick": "Brick/Prova", "geral": "Sessão",
+}
+
+
+def _faixa_total(min_total, por_hora_lo, por_hora_hi, unidade, casas=0):
+    """V24.1: converte uma faixa por-hora em total da sessão, para o
+    usuário não ter que fazer conta mental no meio do treino."""
+    horas = min_total / 60
+    lo = por_hora_lo * horas
+    hi = por_hora_hi * horas
+    if casas == 0:
+        return f"~{round(lo)}-{round(hi)} {unidade} na sessão"
+    return f"~{round(lo, casas)}-{round(hi, casas)} {unidade} na sessão".replace(".", ",")
+
+
+def calcular_combustivel(modalidade, dur_min, intensidade):
+    """V24: estratégia de fueling 100% determinística — faixas por duração
+    e intensidade, sem chamada a modelo. Linguagem de performance, não
+    dieta: sem calorias, sem foco em peso/emagrecimento.
+    V24.1: inclui total estimado da sessão (carbo/fluido/sódio)."""
+
+    # --- Antes ---
+    if dur_min < 60:
+        antes = "Refeição leve 1-2h antes ou apenas hidratação; não é obrigatório comer se for treino curto."
+    else:
+        antes = "Refeição com carboidrato, pobre em fibra/gordura, 1-3h antes. Evite sair em jejum."
+
+    # --- Durante (carboidrato) + total da sessão ---
+    if dur_min < 60:
+        durante_carbo = None
+    elif dur_min < 90:
+        durante_carbo = (
+            "20-30 g de carboidrato/hora (opcional; só se sentir necessidade). "
+            + _faixa_total(dur_min, 20, 30, "g de carbo")
+        )
+    elif dur_min < 150:
+        durante_carbo = (
+            "40-60 g de carboidrato/hora (gel, banana, isotônico). "
+            + _faixa_total(dur_min, 40, 60, "g de carbo")
+        )
+    else:
+        durante_carbo = (
+            "60-90 g de carboidrato/hora, combinando fontes (ex.: glicose + "
+            "frutose) para melhor absorção em esforço longo. "
+            + _faixa_total(dur_min, 60, 90, "g de carbo")
+        )
+
+    # --- Hidratação (calor/umidade NE como padrão) ---
+    if dur_min <= 60:
+        # V24.1: faixa mais ampla — 500-750ml pode ser demais em treino curto
+        hidratacao = "300-750 ml no total, conforme sede, calor e suor; priorize antes e depois."
+    else:
+        hidratacao = (
+            "500-750 ml por hora, ajustando pela sede e pelo calor do dia. "
+            + _faixa_total(dur_min, 0.5, 0.75, "L de fluido", casas=1)
+        )
+
+    # --- Sódio + total ---
+    if dur_min >= 60:
+        sodio = (
+            "500-1000 mg de sódio por hora (clima quente/úmido). "
+            + _faixa_total(dur_min, 500, 1000, "mg de sódio")
+        )
+    else:
+        sodio = "Sódio extra normalmente não é necessário; a alimentação do dia já cobre."
+
+    # --- Depois ---
+    if dur_min < 60 and intensidade != "alta":
+        depois = "A próxima refeição normal já cobre a recuperação; sem urgência."
+    else:
+        depois = "Nos 30-60 min após o treino, combine carboidrato + proteína para iniciar a recuperação."
+
+    # --- Cafeína (opcional, conservadora) ---
+    cafeina = None
+    if dur_min >= 90 or intensidade == "alta":
+        # V24.1: mais conservadora — o Sophos já cruza sono/HRV em outros
+        # comandos; aqui o aviso fecha o ciclo de segurança.
+        cafeina = (
+            "Opcional, 100-200 mg cerca de 30-45 min antes, apenas se você "
+            "já tolera bem. Evite em treino no fim do dia ou se estiver com "
+            "sono ruim, HRV baixo, ansiedade ou estômago sensível."
+        )
+
+    avisos = []
+
+    # --- Ajustes por modalidade ---
+    if modalidade == "natacao":
+        durante_carbo = None
+        avisos.append(
+            "Natação: fueling durante é raro fora de águas abertas muito longas; "
+            "o foco é antes e depois."
+        )
+    elif modalidade == "brick":
+        avisos.append(
+            "Brick/prova: aproveite as transições para repor líquido e "
+            "carboidrato — é a janela mais fácil para comer."
+        )
+    elif modalidade == "geral":
+        avisos.append("Modalidade não identificada na frase; aplicando recomendação geral por duração.")
+
+    avisos.append(
+        "Assumindo calor/umidade padrão do Nordeste. Se o treino foi em "
+        "clima frio, indoor com ar-condicionado ou ambiente ameno, reduza "
+        "fluido e sódio."
+    )
+    avisos.append("Isto é estratégia de combustível para performance, não prescrição nutricional clínica.")
+
+    return {
+        "antes": antes,
+        "durante_carbo": durante_carbo,
+        "hidratacao": hidratacao,
+        "sodio": sodio,
+        "depois": depois,
+        "cafeina": cafeina,
+        "avisos": avisos,
+    }
+
+
+def formatar_combustivel(modalidade, dur_min, intensidade, dados):
+    nome_mod = NOMES_MODALIDADE_COMBUSTIVEL.get(modalidade, "Sessão")
+    dur_label = formatar_duracao(dur_min)
+
+    linhas = [f"🍽️ COMBUSTÍVEL — {nome_mod} {dur_label} ({intensidade})"]
+    linhas.append("")
+
+    linhas.append("Antes:")
+    linhas.append(f"  {dados['antes']}")
+    linhas.append("")
+
+    if dados["durante_carbo"]:
+        linhas.append("Durante:")
+        linhas.append(f"  Carboidrato: {dados['durante_carbo']}")
+        linhas.append(f"  Hidratação: {dados['hidratacao']}")
+        linhas.append(f"  Sódio: {dados['sodio']}")
+    else:
+        linhas.append("Durante:")
+        linhas.append(f"  Hidratação: {dados['hidratacao']}")
+        linhas.append("  Carboidrato durante não costuma ser necessário nessa duração.")
+    linhas.append("")
+
+    linhas.append("Depois:")
+    linhas.append(f"  {dados['depois']}")
+
+    if dados["cafeina"]:
+        linhas.append("")
+        linhas.append("Cafeína:")
+        linhas.append(f"  {dados['cafeina']}")
+
+    if dados["avisos"]:
+        linhas.append("")
+        for a in dados["avisos"]:
+            linhas.append(f"⚠️ {a}")
+
+    return "\n".join(linhas)
+
+
+async def combustivel_command(update, context):
+    """V24: /combustivel <descrição da sessão>
+    Ex: /combustivel sábado pedal 3h
+        /combustivel corrida 90min forte
+        /combustivel natação 1h
+        /combustivel pedal longo 4h Z2
+        /combustivel brick bike 1h + corrida 30min"""
+    pedido = " ".join(context.args) if context.args else ""
+
+    if not pedido.strip():
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "Diga a sessão e a duração. Exemplos:\n"
+            "/combustivel sábado pedal 3h\n"
+            "/combustivel corrida 90min forte\n"
+            "/combustivel natação 1h\n"
+            "/combustivel brick bike 1h + corrida 30min"
+        )
+        return
+
+    dur_min = extrair_duracao_min(pedido)
+
+    if dur_min is None:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "Não consegui identificar a duração. Inclua algo como '3h', "
+            "'1h30' ou '90min'.\nEx: /combustivel pedal 3h"
+        )
+        return
+
+    modalidade = detectar_modalidade_combustivel(pedido)
+    intensidade = detectar_intensidade_combustivel(pedido)
+
+    dados = calcular_combustivel(modalidade, dur_min, intensidade)
+    texto = formatar_combustivel(modalidade, dur_min, intensidade, dados)
+
+    await enviar_texto_longo(context, update.effective_chat.id, texto)
+
+
 async def prontidao_command(update, context):
     """V21: /prontidao — semáforo do dia, zero GPT.
     /prontidao ia — anexa comentário curto do MODEL_FAST (payload mínimo)."""
@@ -3078,6 +3394,9 @@ async def comandos(update, context):
         "/start — iniciar\n"
         "/prontidao — semáforo do dia 🟢🟡🔴 (custo zero)\n"
         "/prontidao ia — semáforo + comentário curto do Sophos\n"
+        "/combustivel <sessão> — estratégia de fueling (custo zero)\n"
+        "   ex: /combustivel pedal 3h\n"
+        "   ex: /combustivel corrida 90min forte\n"
         "/relatorio <dias> — relatório completo de performance\n"
         "/relatorio <xx/xx/xx xx/xx/xx> — relatório por período\n"
         "/analise <pedido livre> — análise focada\n"
@@ -3617,6 +3936,7 @@ def main():
     app.add_handler(CommandHandler("comandos", comandos))
     app.add_handler(CommandHandler("relatorio", relatorio_command))
     app.add_handler(CommandHandler("prontidao", prontidao_command))
+    app.add_handler(CommandHandler("combustivel", combustivel_command))
     app.add_handler(CommandHandler("analise", analise_command))
     app.add_handler(CommandHandler("comparar", comparar_command))
     app.add_handler(CommandHandler("metricas", metricas_command))
