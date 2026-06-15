@@ -1,4 +1,27 @@
-# Sophos V24.2 – main.py
+# Sophos V24.4 – main.py
+#
+# Mudanças vs V24.3:
+# 30. (V24.4) /analise hoje|ontem agora é ALVO + CONTEXTO MACRO. A V24.3
+#     corrigiu o foco (dia único) mas empobreceu o contexto: CTL/ATL/ACWR/
+#     monotonia/strain passavam a ser calculados sobre 1 dia (degenerados).
+#     Agora o comando coleta o dia como alvo + 28 dias de contexto macro
+#     TERMINANDO no dia-alvo (para "ontem" não ser contaminado por treino
+#     de hoje). Payload separa "alvo" (descrição) de "contexto_macro"
+#     (interpretação: comparação com sessões recentes da modalidade, leitura
+#     de carga e recuperação). Prompt dedicado (PROMPT_ANALISE_DIA) instrui
+#     descrever pelo alvo e interpretar pelo contexto. Aviso de carga no modo
+#     alvo olha só o dia-alvo. Janela única de 28d — sem ramificar por
+#     modalidade (decisão a menos, menos superfície de bug).
+#
+# Mudanças vs V24.2:
+# 29. (V24.3) Dois bugs do /analise corrigidos (nascidos de uso real):
+#     - Parser entende "hoje" e "ontem" — antes caíam no padrão de 30 dias
+#       ("/analise natação hoje" coletava 30 dias). Resolvido via datas
+#       explícitas (não dias=1, que a trava min 2 dias empurraria de volta).
+#       Status mostra "de hoje"/"de ontem" em vez de "últimos 1 dias".
+#     - Aviso de carga corrigida agora filtra pelos domínios pedidos: uma
+#       análise de natação não mostra mais o aviso de correção da bike
+#       (era ruído, treinos_relevantes_para_dominios resolve).
 #
 # Mudanças vs V24.1:
 # 27. (V24.2) Strain entra na pontuação do /prontidao — mas via COMBO, não
@@ -405,6 +428,35 @@ ESTRUTURA:
 📈 TENDÊNCIA — melhorou, piorou ou estável; principal gargalo.
 🎯 RECOMENDAÇÃO — ajuste prático e específico ao foco pedido."""
 
+PROMPT_ANALISE_DIA = """Você é coach de endurance e cientista de dados de performance.
+
+O usuário pediu a análise de UM DIA/TREINO específico (campo "alvo"), mas com
+o cenário das últimas semanas como pano de fundo (campo "contexto_macro").
+
+REGRAS DE USO DOS DADOS:
+- Descreva e avalie o treino usando o ALVO.
+- Use o CONTEXTO_MACRO só para INTERPRETAR: comparar com sessões recentes da
+  mesma modalidade, julgar se o dia pesa na carga, e ler impacto na
+  recuperação. NÃO trate o contexto macro como se fosse o período analisado.
+- "ultimas_sessoes_mesmo_dominio" é a base de comparação técnica (ex: pace,
+  DPS, SWOLF de natação ao longo do período). Compare o alvo com elas.
+- CTL/ATL/TSB/ACWR/rampa/monotonia/strain do contexto dizem se há fadiga
+  sistêmica ou se o quadro está neutro. Use para separar "dia técnico fraco"
+  de "limitação por recuperação".
+
+REGRAS GERAIS:
+- Texto puro. Sem Markdown (**, --, ##). Máximo 3000 caracteres.
+- Use indicadores já calculados. Não recalcule. Não invente dado ausente.
+- Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
+- Priorize conclusão sobre descrição.
+
+ESTRUTURA:
+📊 O TREINO DE HOJE — números-chave do dia pedido.
+🔍 COMPARAÇÃO — como esse treino se posiciona vs as sessões recentes da modalidade.
+🔗 IMPACTO NO CENÁRIO — o que ele significa para carga e recuperação atuais.
+📈 LEITURA — foi bom/ruído/técnico/leve? Qual o gargalo, se houver?
+🎯 RECOMENDAÇÃO — ajuste prático para a próxima sessão da modalidade."""
+
 PROMPT_COMPARACAO = """Você é coach de endurance e cientista de dados de performance.
 
 Compare o PERÍODO A (anterior) com o PERÍODO B (atual).
@@ -646,12 +698,24 @@ def parse_periodo_args(args):
 
 def interpretar_pedido_analise(texto):
     """V19: parser local do /analise. Zero custo de token.
-    Extrai (dias, inicio, fim, dominios) de um pedido em texto livre.
-    Ex: 'sono nos últimos 30 dias' -> (30, None, None, ['sono'])
-        'corrida e natação último mês' -> (30, None, None, ['corrida','natacao'])
-        'hrv 2 semanas' -> (14, None, None, ['recuperacao'])
-        'sono 01/05/26 31/05/26' -> (30, '01/05/26', '31/05/26', ['sono'])"""
+    Extrai (dias, inicio, fim, dominios, modo_alvo) de um pedido livre.
+    modo_alvo=True quando o pedido é de um dia específico (hoje/ontem):
+    o comando então coleta o dia como alvo + 28 dias de contexto macro.
+    Ex: 'sono nos últimos 30 dias' -> (30, None, None, ['sono'], False)
+        'natação hoje' -> (1, '15/06/26', '15/06/26', ['natacao'], True)"""
     t = remover_acentos((texto or "").lower())
+
+    # V24.3/V24.4: "hoje"/"ontem" — dia único como ALVO. A V24.4 acopla
+    # contexto macro de 28 dias na hora de coletar (ver analise_command);
+    # aqui só sinalizamos modo_alvo=True para o comando saber o que fazer.
+    hoje = hoje_local()
+    if re.search(r"\bhoje\b", t):
+        d_str = hoje.strftime("%d/%m/%y")
+        return 1, d_str, d_str, _dominios_de(t), True
+    if re.search(r"\bontem\b", t):
+        o = hoje - timedelta(days=1)
+        o_str = o.strftime("%d/%m/%y")
+        return 1, o_str, o_str, _dominios_de(t), True
 
     # 1) Datas explícitas
     datas = []
@@ -689,16 +753,18 @@ def interpretar_pedido_analise(texto):
 
     dias = min(max(dias, 2), 120)  # proteção contra payloads gigantes
 
-    # 2) Domínios (combináveis)
+    return dias, inicio, fim, _dominios_de(t), False
+
+
+def _dominios_de(t):
+    """V24.3: extrai domínios (combináveis) do texto já normalizado."""
     dominios = []
     for dom, palavras in DOMINIOS_ANALISE.items():
         if any(p in t for p in palavras):
             dominios.append(dom)
-
     if not dominios:
         dominios = ["geral"]
-
-    return dias, inicio, fim, dominios
+    return dominios
 
 def _carga(t):
     """V23: carga que o Sophos usa nos cálculos — efetiva se corrigida,
@@ -2236,6 +2302,82 @@ def preparar_dados_relatorio_historico(d):
     return limpar_vazios(dados)
 
 
+def treinos_relevantes_para_dominios(treinos, dominios):
+    """V24.3: filtra treinos pelos domínios pedidos. Usado para não mostrar
+    aviso de carga corrigida da bike numa /analise natação (era ruído)."""
+    if "geral" in dominios or not dominios:
+        return treinos
+    tipos = []
+    for dom in dominios:
+        tipos.extend(MAPA_TIPO_DOMINIO.get(dom, []))
+    if not tipos:
+        return treinos  # domínios sem esporte (sono/recuperação) — mantém todos
+    return [
+        t for t in treinos
+        if any(k in (t.get("tipo") or "").lower() for k in tipos)
+    ]
+
+
+def montar_payload_alvo_com_contexto(d_alvo, d_ctx, dominios):
+    """V24.4: para /analise hoje|ontem. O dia pedido é o ALVO (descrição);
+    os 28 dias são o CONTEXTO MACRO (interpretação de impacto/comparação/
+    risco). Resolve o problema da V24.3, que coletava só 1 dia e degenerava
+    CTL/ATL/ACWR/monotonia/strain (calculados sobre uma amostra de um dia)."""
+    cond = d_ctx.get("condicionamento") or {}
+    ind = d_ctx.get("indicadores") or {}
+    totais = d_ctx.get("totais") or {}
+    rec = d_ctx.get("recuperacao") or {}
+    treinos_ctx = d_ctx.get("treinos") or []
+
+    # Últimas sessões da(s) mesma(s) modalidade(s) pedida(s) — base de
+    # comparação técnica (ex: DPS/SWOLF/pace de natação ao longo do mês).
+    esportes = [x for x in dominios if x in MAPA_TIPO_DOMINIO]
+    ultimas_sessoes = []
+    if esportes:
+        tipos = []
+        for e in esportes:
+            tipos.extend(MAPA_TIPO_DOMINIO[e])
+        relevantes = [
+            t for t in treinos_ctx
+            if any(k in (t.get("tipo") or "").lower() for k in tipos)
+        ]
+        relevantes.sort(key=lambda t: t.get("data") or "")
+        ultimas_sessoes = [treino_para_payload(t) for t in relevantes[-8:]]
+
+    alerta = dict(ind.get("alerta_recuperacao") or {})
+    alerta.pop("observacao", None)
+
+    return limpar_vazios({
+        "modo": "analise_de_dia_com_contexto",
+        "alvo": filtrar_dados_para_analise(d_alvo, dominios),
+        "contexto_macro": {
+            "periodo": d_ctx.get("periodo"),
+            "baseline": d_ctx.get("baseline"),
+            "condicionamento": {
+                "fitness_ctl": cond.get("fitness_ctl"),
+                "fadiga_atl": cond.get("fadiga_atl"),
+                "forma_tsb": cond.get("forma_tsb"),
+                "ramp_rate": cond.get("ramp_rate"),
+                "vo2max": cond.get("vo2max"),
+            },
+            "indicadores": {
+                "acwr": ind.get("acwr"),
+                "monotonia": ind.get("monotonia_carga"),
+                "strain": ind.get("strain"),
+                "carga_por_dia": ind.get("carga_por_dia"),
+                "distribuicao_carga_pct": ind.get("distribuicao_carga_pct"),
+                "alerta_recuperacao": alerta,
+            },
+            "recuperacao": {
+                "hrv_medio": rec.get("hrv_medio"),
+                "rhr_medio": rec.get("rhr_medio"),
+                "sono_medio_h": rec.get("sono_medio_h"),
+            },
+            "ultimas_sessoes_mesmo_dominio": ultimas_sessoes,
+        },
+    })
+
+
 def filtrar_dados_para_analise(d, dominios):
     """V19: monta o payload focado do /analise. Envia ao modelo só o
     subconjunto relevante ao(s) domínio(s) pedido(s) — mais barato e
@@ -3176,20 +3318,41 @@ async def analise_command(update, context):
         )
         return
 
-    dias, inicio, fim, dominios = interpretar_pedido_analise(pedido)
+    dias, inicio, fim, dominios, modo_alvo = interpretar_pedido_analise(pedido)
 
     nomes = ", ".join(NOMES_DOMINIO.get(x, x) for x in dominios)
 
-    msg_status = (
-        f"🔍 Analisando {nomes} de {inicio} a {fim}..."
-        if inicio and fim
-        else f"🔍 Analisando {nomes} dos últimos {dias} dias..."
-    )
+    # V24.3/V24.4: status legível para hoje/ontem/dia único
+    if modo_alvo and inicio and fim:
+        hoje_str = hoje_local().strftime("%d/%m/%y")
+        ontem_str = (hoje_local() - timedelta(days=1)).strftime("%d/%m/%y")
+        quando = "de hoje" if inicio == hoje_str else ("de ontem" if inicio == ontem_str else f"de {inicio}")
+        msg_status = f"🔍 Analisando {nomes} {quando} com contexto dos últimos 28 dias..."
+    elif inicio and fim:
+        msg_status = f"🔍 Analisando {nomes} de {inicio} a {fim}..."
+    else:
+        msg_status = f"🔍 Analisando {nomes} dos últimos {dias} dias..."
 
     await context.bot.send_message(update.effective_chat.id, msg_status)
 
     try:
-        d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
+        if modo_alvo:
+            # V24.4: dia-alvo + 28 dias de contexto macro TERMINANDO no
+            # dia-alvo (não em hoje), para "ontem" não ser contaminado por
+            # um treino feito hoje.
+            d_alvo = coletar_intervals(inicio=inicio, fim=fim)
+            fim_alvo = normalizar_data_br(fim) if isinstance(fim, str) else fim
+            ini_ctx = fim_alvo - timedelta(days=27)
+            d_ctx = coletar_intervals(inicio=ini_ctx, fim=fim_alvo)
+            payload = montar_payload_alvo_com_contexto(d_alvo, d_ctx, dominios)
+            prompt_analise = PROMPT_ANALISE_DIA
+            # alvo (1 dia) é a referência para o aviso de carga
+            treinos_para_aviso = d_alvo.get("treinos", [])
+        else:
+            d = coletar_intervals(dias=dias, inicio=inicio, fim=fim)
+            payload = filtrar_dados_para_analise(d, dominios)
+            prompt_analise = PROMPT_ANALISE
+            treinos_para_aviso = d.get("treinos", [])
     except Exception as e:
         print("Erro analise:", e)
         await context.bot.send_message(
@@ -3198,8 +3361,6 @@ async def analise_command(update, context):
         )
         return
 
-    payload = filtrar_dados_para_analise(d, dominios)
-
     dados_json = json.dumps(
         payload,
         ensure_ascii=False,
@@ -3207,19 +3368,23 @@ async def analise_command(update, context):
         default=str
     )
 
-    dias_efetivos = d.get("dias", dias)
-    multi_dominio = len(dominios) >= 2 or "geral" in dominios
-    modelo = MODEL_MAIN if (dias_efetivos >= 21 or multi_dominio) else MODEL_FAST
+    # V24.4: modo alvo sempre usa MODEL_MAIN (interpretação cruzada exige
+    # raciocínio; o payload é enxuto, então o custo é controlado).
+    if modo_alvo:
+        modelo = MODEL_MAIN
+    else:
+        dias_efetivos = dias
+        multi_dominio = len(dominios) >= 2 or "geral" in dominios
+        modelo = MODEL_MAIN if (dias_efetivos >= 21 or multi_dominio) else MODEL_FAST
 
     resposta = chamar_gpt_sync(
         [
-            {"role": "system", "content": ESTILO_SOPHOS + "\n\n" + PROMPT_ANALISE},
+            {"role": "system", "content": ESTILO_SOPHOS + "\n\n" + prompt_analise},
             {
                 "role": "user",
                 "content": (
                     f"Pedido original do usuário: {pedido}\n"
-                    f"Foco(s) identificado(s): {nomes}\n"
-                    f"Período: {d.get('periodo')}\n\n"
+                    f"Foco(s) identificado(s): {nomes}\n\n"
                     f"DADOS:\n{dados_json}"
                 )
             },
@@ -3231,8 +3396,10 @@ async def analise_command(update, context):
 
     context.user_data["ultima_resposta"] = resposta
 
-    # V23: aviso de correção de carga, se houver
-    _avisos_c = avisos_carga_corrigida(d.get("treinos", []))
+    # V23/V24.3/V24.4: aviso de carga só dos treinos relevantes ao domínio,
+    # e no modo alvo só do próprio dia-alvo (não do contexto macro).
+    treinos_aviso = treinos_relevantes_para_dominios(treinos_para_aviso, dominios)
+    _avisos_c = avisos_carga_corrigida(treinos_aviso)
     prefixo_aviso = ""
     if _avisos_c:
         prefixo_aviso = (
@@ -3240,10 +3407,11 @@ async def analise_command(update, context):
             + "; ".join(_avisos_c) + "\n\n"
         )
 
+    titulo = f"🔍 Análise focada ({nomes}):" if not modo_alvo else f"🔍 Análise ({nomes}, dia com contexto):"
     await enviar_texto_longo(
         context,
         update.effective_chat.id,
-        f"🔍 Análise focada ({nomes}):\n\n" + prefixo_aviso + resposta,
+        titulo + "\n\n" + prefixo_aviso + resposta,
         reply_markup=marcadores_feedback("analise")
     )
 
