@@ -1,4 +1,21 @@
-# Sophos V24.1 – main.py
+# Sophos V24.2 – main.py
+#
+# Mudanças vs V24.1:
+# 27. (V24.2) Strain entra na pontuação do /prontidao — mas via COMBO, não
+#     sozinho, para não dar dupla punição com monotonia (strain já contém
+#     monotonia na fórmula: strain = carga_média_diária × monotonia).
+#     Regra: monotonia >2.0 sozinha = +1 | monotonia >2.0 + strain ≥170 +
+#     SEGUNDO SINAL (HRV/RHR/sono ruim, ou TSB <-10, ou ACWR >1.3, ou treino
+#     pesado ontem) = +2 total | strain >200 sozinho = +1. O combo só sobe o
+#     alerta quando há evidência de que o corpo não está absorvendo — carga
+#     alta e uniforme com fisiologia boa fica verde com observação textual.
+#     IMPORTANTE: faixa VISUAL (≥150 = alto) ≠ gatilho de PONTUAÇÃO (≥170);
+#     150 descreve, 170 age. Faixas recalibradas para o volume real do
+#     usuário: <80 baixo | 80-150 moderado | 150-200 alto | >200 muito alto.
+# 28. (V24.2) Pace de natação usa average_speed nativo do Intervals quando
+#     disponível (fallback no cálculo por distância/duração); pace_min_km
+#     deixa de ser exibido para natação (formato de corrida não faz sentido
+#     em nado). Validado: 100/vel/60 bate com o pace mostrado no Garmin.
 #
 # Mudanças vs V24:
 # 26. (V24.1) Correções no /combustivel após auditoria:
@@ -1213,7 +1230,11 @@ def calcular_indicadores(d, baseline=None):
         dur_min = t.get("dur_min") or 0
         cad = t.get("cadencia")
 
-        pace_100m = round(dur_min / (dist_m / 100), 2) if dist_m else None
+        # V24.2: usa pace nativo (average_speed) quando veio; senão calcula
+        # por distância/duração como antes.
+        pace_100m = t.get("pace_100m_nativo")
+        if pace_100m is None:
+            pace_100m = round(dur_min / (dist_m / 100), 2) if dist_m else None
 
         dps_estimado = None
         swolf_estimado = None
@@ -1472,6 +1493,12 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             pass
 
         vel = a.get("average_speed")
+        tipo_ativ = (a.get("type") or "").lower()
+        eh_swim = "swim" in tipo_ativ
+        # V24.2: pace por km só faz sentido fora da natação; para swim,
+        # pace_100m nativo via average_speed (m/s). Validado contra o Garmin.
+        pace_km = round(1000 / vel / 60, 2) if vel else None
+        pace_100m_nativo = round((100 / vel) / 60, 2) if (vel and eh_swim) else None
 
         treinos.append({
             "tipo": a.get("type"),
@@ -1481,7 +1508,8 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
             "dur_min": round((a.get("moving_time") or 0) / 60, 1),
             "fc_med": a.get("average_heartrate"),
             "fc_max": a.get("max_heartrate"),
-            "pace_min_km": round(1000 / vel / 60, 2) if vel else None,
+            "pace_min_km": pace_km if not eh_swim else None,
+            "pace_100m_nativo": pace_100m_nativo,
             "potencia_w": a.get("icu_average_watts"),
             "elev_m": round(a.get("total_elevation_gain") or 0),
             "cadencia": a.get("average_cadence"),
@@ -2412,24 +2440,53 @@ def calcular_prontidao(d):
         else:
             positivos.append(f"rampa {ramp}/sem (descarregando — bom para absorver)")
 
-    # --- Monotonia ---
-    mono = ind.get("monotonia_carga")
-    if mono is not None and mono > 2.0:
-        pontos += 1
-        motivos.append(f"monotonia {mono} (carga sem variação)")
-
-    # --- Treino de ontem ---
+    # --- Treino de ontem (V24.2: calculado antes do combo de strain,
+    # porque "treino pesado ontem" é um dos sinais do segundo gatilho) ---
     ontem = (hoje_local() - timedelta(days=1)).isoformat()  # V21.1: data local
     carga_ontem = round(sum(
         _carga(t) for t in treinos if t.get("data") == ontem
     ))
     carga_dia = ind.get("carga_por_dia") or 0
+    treino_pesado_ontem = bool(carga_dia and carga_ontem > carga_dia * 1.8)
 
-    if carga_dia and carga_ontem > carga_dia * 1.8:
+    if treino_pesado_ontem:
         pontos += 1
         motivos.append(f"treino pesado ontem (carga {carga_ontem} vs média diária {carga_dia})")
     elif carga_ontem == 0:
         positivos.append("descanso ontem")
+
+    # --- Monotonia + Strain (V24.2: combo, não punição dupla) ---
+    # strain = carga_média_diária × monotonia, então strain já carrega a
+    # monotonia. Pontuar os dois separados seria contar a mesma coisa duas
+    # vezes. Regra: monotonia sozinha = +1; combo (monotonia alta + strain
+    # ≥170 + um segundo sinal de desalinhamento) = +2 total; strain muito
+    # alto isolado (>200) = +1. Faixa visual (≥150) ≠ gatilho (≥170).
+    mono = ind.get("monotonia_carga")
+    strain = ind.get("strain")
+
+    # Segundo sinal: evidência de que o corpo não está absorvendo a carga.
+    # Sem ele, carga alta e uniforme é só estrutura subótima, não fadiga.
+    segundo_sinal = (
+        hrv_st.get("status") in ("baixo", "desequilibrado")
+        or rhr_st.get("status") == "alto"
+        or sono_st.get("status") in ("baixo", "desequilibrado")
+        or (tsb is not None and tsb < -10)
+        or (acwr is not None and acwr > 1.3)
+        or treino_pesado_ontem
+    )
+
+    if mono is not None and mono > 2.0:
+        if strain is not None and strain >= 170 and segundo_sinal:
+            pontos += 2
+            motivos.append(
+                f"monotonia {mono} + strain alto ({strain}) com outro sinal de carga/recuperação"
+            )
+        else:
+            pontos += 1
+            motivos.append(f"monotonia {mono} (carga sem variação)")
+    elif strain is not None and strain > 200:
+        pontos += 1
+        motivos.append(f"strain {strain} muito alto (fadiga acumulada)")
 
     # --- V21.1: frescura do dado ---
     # Semáforo confiante com dado defasado é pior que semáforo ausente.
@@ -2570,15 +2627,15 @@ def formatar_prontidao(p):
             zona_mono = "boa variação" if mono < 1.5 else ("atenção" if mono <= 2.0 else "uniforme demais")
             linhas.append(f"  Monotonia: {mono}  [{zona_mono}]")
 
-        # V22.1: strain classificado + leitura combinada com monotonia.
-        # Faixas genéricas calibradas para carga/dia ~40-60; revisitar se
-        # o volume mudar muito (ideal futuro: baseline individual).
+        # V24.2: faixas recalibradas para o volume real do usuário.
+        # Estas são VISUAIS (descrição); o gatilho de PONTUAÇÃO é ≥170 no
+        # combo — 150 descreve "alto", 170 é quando começa a pesar no dia.
         if strain is not None:
             if strain < 80:
                 zona_strain, comentario_strain = "baixo", "carga acumulada tranquila"
-            elif strain < 120:
+            elif strain < 150:
                 zona_strain, comentario_strain = "moderado", "carga acumulada controlada"
-            elif strain < 180:
+            elif strain < 200:
                 zona_strain, comentario_strain = "alto", "atenção à fadiga acumulada"
             else:
                 zona_strain, comentario_strain = "muito alto", "risco maior de fadiga acumulada"
@@ -2586,9 +2643,9 @@ def formatar_prontidao(p):
             linhas.append(f"  Strain: {strain}  [{zona_strain}]")
 
             # Leitura: o combo mais traiçoeiro é carga ok + variação baixa.
-            # V23.2: quando o strain já está alto (>=120), a frase não
+            # V23.2/V24.2: quando o strain já está alto (>=150), a frase não
             # minimiza mais com "não está explosiva" — pede contraste real.
-            if mono is not None and mono >= 2.0 and strain >= 120:
+            if mono is not None and mono >= 2.0 and strain >= 150:
                 linhas.append(
                     "  Leitura: carga acumulada já está alta e a variação está baixa; "
                     "hoje pede contraste real — leve de verdade ou descanso ativo."
@@ -2598,7 +2655,7 @@ def formatar_prontidao(p):
                     "  Leitura: carga não está explosiva, mas a variação está baixa; "
                     "alterne melhor dias leves e fortes."
                 )
-            elif strain >= 120:
+            elif strain >= 150:
                 linhas.append(
                     "  Leitura: carga acumulada alta; monitore sono, HRV e sensação de pernas."
                 )
