@@ -1,4 +1,21 @@
-# Sophos V24.4 – main.py
+# Sophos V24.5 – main.py
+#
+# Mudanças vs V24.4:
+# 31. (V24.5) Pontuação FRACIONADA no /prontidao + estado "Treinar com
+#     ajuste". O sistema 0/1/2 inteiros era binário demais para a zona
+#     cinza (recuperação boa + carga estrutural alta + TSB levemente
+#     negativo): caía em verde permissivo ("hoje é dia de intensidade")
+#     contradizendo a própria Leitura do painel. Agora sinais FORTES seguem
+#     inteiros (HRV baixo +3, ACWR >1.5 +3, sono ruim +2, TSB <-20 +2, rampa
+#     >8 +2); sinais de ZONA CINZA usam frações (monotonia >2.0 +0.75 / >2.5
+#     +1.0; strain ≥150 +0.5 / ≥170 +0.75 / >200 +1.25; TSB -10 a 0 +0.25).
+#     O bloco de carga estrutural (mono+strain+TSB leve) é CAPADO em 2.0 —
+#     como strain contém monotonia, isso impede dupla contagem empurrar dia
+#     são para amarelo (substitui o combo da V24.2, mais granular).
+#     Cortes: <1.5 verde normal | 1.5-2.4 verde COM AJUSTE | 2.5-4.9 amarelo
+#     | 5+ vermelho. "Treinar com ajuste" mantém nivel="verde" internamente
+#     (não quebra estado salvo / injeção de decisão da V22.2); só rótulo e
+#     ação mudam — tira o "hoje é dia de intensidade", pede contraste.
 #
 # Mudanças vs V24.3:
 # 30. (V24.4) /analise hoje|ontem agora é ALVO + CONTEXTO MACRO. A V24.3
@@ -2548,7 +2565,7 @@ def calcular_prontidao(d):
         else:
             positivos.append(f"ACWR {acwr} (carga controlada)")
 
-    # --- TSB / Forma ---
+    # --- TSB / Forma (V24.5: fração na zona cinza -10 a 0) ---
     tsb = cond.get("forma_tsb")
     if tsb is not None:
         if tsb < -20:
@@ -2557,10 +2574,12 @@ def calcular_prontidao(d):
         elif tsb < -10:
             pontos += 1
             motivos.append(f"TSB {tsb} (carregado)")
+        elif tsb < 0:
+            # zona cinza: levemente negativo soma em frações no bloco de
+            # carga estrutural (mais abaixo), não aqui, para respeitar o cap.
+            pass
         elif tsb > 5:
             positivos.append(f"TSB {tsb} (fresco)")
-        # V23.2: entre -10 e +5 é neutro — não conta a favor nem contra.
-        # Não entra em positivos para não dar falsa sensação de vantagem.
 
     # --- V22: Rampa (variação de CTL/semana, direto da API) ---
     # Regra de ouro: rampa alta só é problema quando o corpo não acompanha.
@@ -2582,8 +2601,8 @@ def calcular_prontidao(d):
         else:
             positivos.append(f"rampa {ramp}/sem (descarregando — bom para absorver)")
 
-    # --- Treino de ontem (V24.2: calculado antes do combo de strain,
-    # porque "treino pesado ontem" é um dos sinais do segundo gatilho) ---
+    # --- Treino de ontem (V24.5: a pontuação dele entra no bloco de carga
+    # estrutural abaixo como fração; aqui só detecta e registra) ---
     ontem = (hoje_local() - timedelta(days=1)).isoformat()  # V21.1: data local
     carga_ontem = round(sum(
         _carga(t) for t in treinos if t.get("data") == ontem
@@ -2592,43 +2611,50 @@ def calcular_prontidao(d):
     treino_pesado_ontem = bool(carga_dia and carga_ontem > carga_dia * 1.8)
 
     if treino_pesado_ontem:
-        pontos += 1
         motivos.append(f"treino pesado ontem (carga {carga_ontem} vs média diária {carga_dia})")
     elif carga_ontem == 0:
         positivos.append("descanso ontem")
 
-    # --- Monotonia + Strain (V24.2: combo, não punição dupla) ---
-    # strain = carga_média_diária × monotonia, então strain já carrega a
-    # monotonia. Pontuar os dois separados seria contar a mesma coisa duas
-    # vezes. Regra: monotonia sozinha = +1; combo (monotonia alta + strain
-    # ≥170 + um segundo sinal de desalinhamento) = +2 total; strain muito
-    # alto isolado (>200) = +1. Faixa visual (≥150) ≠ gatilho (≥170).
+    # --- Carga estrutural (V24.5: fracionado e CAPADO) ---
+    # strain = carga_média_diária × monotonia, então strain CONTÉM monotonia.
+    # Somar os dois cheios seria dupla contagem. Solução: cada um soma sua
+    # fração, mais TSB levemente negativo, e o bloco inteiro é capado em 2.0
+    # — assim carga alta e uniforme com fisiologia boa fica em "ajuste", não
+    # vira amarelo. Substitui o combo da V24.2 (mais granular).
     mono = ind.get("monotonia_carga")
     strain = ind.get("strain")
+    p_carga = 0.0
 
-    # Segundo sinal: evidência de que o corpo não está absorvendo a carga.
-    # Sem ele, carga alta e uniforme é só estrutura subótima, não fadiga.
-    segundo_sinal = (
-        hrv_st.get("status") in ("baixo", "desequilibrado")
-        or rhr_st.get("status") == "alto"
-        or sono_st.get("status") in ("baixo", "desequilibrado")
-        or (tsb is not None and tsb < -10)
-        or (acwr is not None and acwr > 1.3)
-        or treino_pesado_ontem
-    )
-
-    if mono is not None and mono > 2.0:
-        if strain is not None and strain >= 170 and segundo_sinal:
-            pontos += 2
-            motivos.append(
-                f"monotonia {mono} + strain alto ({strain}) com outro sinal de carga/recuperação"
-            )
-        else:
-            pontos += 1
+    if mono is not None:
+        if mono > 2.5:
+            p_carga += 1.0
+            motivos.append(f"monotonia {mono} (muito uniforme)")
+        elif mono > 2.0:
+            p_carga += 0.75
             motivos.append(f"monotonia {mono} (carga sem variação)")
-    elif strain is not None and strain > 200:
-        pontos += 1
-        motivos.append(f"strain {strain} muito alto (fadiga acumulada)")
+
+    if strain is not None:
+        if strain > 200:
+            p_carga += 1.25
+            motivos.append(f"strain {strain} (muito alto)")
+        elif strain >= 170:
+            p_carga += 0.75
+            motivos.append(f"strain {strain} (alto)")
+        elif strain >= 150:
+            p_carga += 0.5
+            motivos.append(f"strain {strain} (faixa alta)")
+
+    if tsb is not None and -10 < tsb < 0:
+        p_carga += 0.25
+        motivos.append(f"TSB {tsb} (levemente negativo)")
+
+    if treino_pesado_ontem:
+        p_carga += 0.5  # já listado acima como motivo; aqui só soma a fração
+
+    # Cap: o bloco estrutural inteiro não passa de 2.0, para não empurrar
+    # sozinho um dia fisiologicamente são para amarelo (corte em 2.5).
+    p_carga = min(p_carga, 2.0)
+    pontos += p_carga
 
     # --- V21.1: frescura do dado ---
     # Semáforo confiante com dado defasado é pior que semáforo ausente.
@@ -2672,7 +2698,7 @@ def calcular_prontidao(d):
             acao = "Reduzir intensidade hoje. Sinais de recuperação comprometida: descanso ativo ou off, e prioridade número um é dormir bem."
         else:
             acao = "Reduzir intensidade hoje. Descanso ativo, mobilidade ou off. Prioridade número um: dormir bem."
-    elif pontos >= 2:
+    elif pontos >= 2.5:
         nivel, emoji, rotulo = "amarelo", "🟡", "Atenção"
         if alerta_por_carga and not alerta_por_recuperacao:
             acao = "Treinar leve. Hoje o objetivo é absorver a carga recente: Z1/Z2 baixo, sem tiros, sem força pesada e sem volume longo."
@@ -2680,6 +2706,15 @@ def calcular_prontidao(d):
             acao = "Treinar leve e priorizar recuperação. Z2 baixo, evitar tiros e volume longo; cuidar do sono hoje."
         else:
             acao = "Treinar leve. Manter Z2, evitar tiros, séries pesadas e volume longo."
+    elif pontos >= 1.5:
+        # V24.5: zona cinza. nivel="verde" internamente (não quebra estado
+        # salvo nem injeção de decisão da V22.2); só rótulo e ação mudam.
+        nivel, emoji, rotulo = "verde", "🟢", "Treinar com ajuste"
+        acao = (
+            "Pode treinar, mas hoje não é o melhor dia para adicionar intensidade opcional. "
+            "Se o treino forte já estava programado e é importante, execute com controle; "
+            "se for flexível, prefira Z2 baixo, técnica ou volume moderado — o objetivo é dar contraste à carga."
+        )
     else:
         nivel, emoji, rotulo = "verde", "🟢", "Treinar normal"
         acao = "Sinal verde. Siga o plano; se houver intensidade programada, hoje é dia."
@@ -2691,7 +2726,7 @@ def calcular_prontidao(d):
         "nivel": nivel,
         "emoji": emoji,
         "rotulo": rotulo,
-        "pontos": pontos,
+        "pontos": round(pontos, 1),
         "motivos": motivos,
         "positivos": positivos,
         "acao": acao,
@@ -2784,14 +2819,20 @@ def formatar_prontidao(p):
 
             linhas.append(f"  Strain: {strain}  [{zona_strain}]")
 
-            # Leitura: o combo mais traiçoeiro é carga ok + variação baixa.
-            # V23.2/V24.2: quando o strain já está alto (>=150), a frase não
-            # minimiza mais com "não está explosiva" — pede contraste real.
-            if mono is not None and mono >= 2.0 and strain >= 150:
-                linhas.append(
-                    "  Leitura: carga acumulada já está alta e a variação está baixa; "
-                    "hoje pede contraste real — leve de verdade ou descanso ativo."
-                )
+            # Leitura (V24.5): condicional ao TSB, casa com a ação.
+            # Com TSB negativo, reconhece a forma carregada; com TSB ok,
+            # reconhece recuperação boa mas alerta contra empilhar carga.
+            if mono is not None and mono >= 2.0 and strain >= 170:
+                if tsb is not None and tsb < 0:
+                    linhas.append(
+                        "  Leitura: carga acumulada alta e variação baixa, com TSB ainda negativo; "
+                        "o dia pede contraste — controle intensidade ou reduza volume se o treino forte não for prioridade."
+                    )
+                else:
+                    linhas.append(
+                        "  Leitura: carga acumulada alta e variação baixa; recuperação está boa, "
+                        "mas evite empilhar mais um dia médio/alto igual aos anteriores."
+                    )
             elif mono is not None and mono >= 2.0 and strain >= 80:
                 linhas.append(
                     "  Leitura: carga não está explosiva, mas a variação está baixa; "
