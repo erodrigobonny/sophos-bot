@@ -1,4 +1,13 @@
-# Sophos V24.7 – main.py
+# Sophos V24.7.1 – main.py
+#
+# Mudanças vs V24.7:
+# 35. (V24.7.1) Dois acertos no /prontidao:
+#     - Janela voltou a 7 dias FECHADOS: a V24.7 coletava 7 e excluía hoje,
+#       sobrando só 6. Agora coleta 8 e exclui hoje -> 7 fechados.
+#     - Média/dia coerente: carga_por_dia_calculo usa a mesma base (dias
+#       fechados) da monotonia/strain. Antes a média vinha de carga_total/dias
+#       (com hoje incluído), divergindo da base da monotonia. Usada também
+#       para detectar "treino pesado ontem".
 #
 # Mudanças vs V24.6:
 # 34. (V24.7) /prontidao não conta mais o dia de HOJE na monotonia/strain.
@@ -1352,9 +1361,11 @@ def calcular_indicadores(d, baseline=None, excluir_dia=None):
         del cargas_para_calculo[excluir_dia]
 
     cargas_lista = list(cargas_para_calculo.values())
+    media_carga_diaria_calculo = None
 
     if len(cargas_lista) >= 2:
         media_carga_diaria = sum(cargas_lista) / len(cargas_lista)
+        media_carga_diaria_calculo = round(media_carga_diaria, 1)
         variancia = sum((x - media_carga_diaria) ** 2 for x in cargas_lista) / len(cargas_lista)
         desvio = variancia ** 0.5
         monotonia = round(media_carga_diaria / desvio, 2) if desvio else None
@@ -1469,6 +1480,7 @@ def calcular_indicadores(d, baseline=None, excluir_dia=None):
         "cargas_diarias_janela": cargas_para_calculo,  # V24.7: sem o dia excluído
         "dia_excluido_calculo": excluir_dia if (excluir_dia and excluir_dia in cargas_por_dia) else None,
         "carga_dia_excluido": cargas_por_dia.get(excluir_dia) if excluir_dia else None,
+        "carga_por_dia_calculo": media_carga_diaria_calculo,  # V24.7.1: média dos dias fechados
         "metricas_natacao": metricas_natacao,
         "ftp_bike_detectado": ftp_bike_detectado,
         "eftp_intervals": eftp,
@@ -2676,7 +2688,9 @@ def calcular_prontidao(d):
     carga_ontem = round(sum(
         _carga(t) for t in treinos if t.get("data") == ontem
     ))
-    carga_dia = ind.get("carga_por_dia") or 0
+    # V24.7.1: usa a média dos dias FECHADOS (mesma base da monotonia/strain),
+    # não a média com hoje incluído — senão média/dia e monotonia divergem.
+    carga_dia = ind.get("carga_por_dia_calculo") or ind.get("carga_por_dia") or 0
     treino_pesado_ontem = bool(carga_dia and carga_ontem > carga_dia * 1.8)
 
     if treino_pesado_ontem:
@@ -3289,9 +3303,10 @@ async def prontidao_command(update, context):
     )
 
     try:
-        # V24.7: hoje é dia parcial (em andamento). Excluí-lo do cálculo de
-        # monotonia/strain evita que "hoje 0" entre como off e infle a métrica.
-        d = coletar_intervals(dias=7, excluir_dia_calculo=hoje_local().isoformat())
+        # V24.7: hoje é dia parcial (em andamento). Coleta 8 dias porque hoje
+        # será excluído da monotonia/strain — sobram 7 dias FECHADOS terminando
+        # ontem + hoje apenas informativo. (V24.7.1: era dias=7, sobrava 6.)
+        d = coletar_intervals(dias=8, excluir_dia_calculo=hoje_local().isoformat())
     except Exception as e:
         print("Erro prontidao:", e)
         await context.bot.send_message(
