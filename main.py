@@ -1,4 +1,26 @@
-# Sophos V24.5 – main.py
+# Sophos V24.6 – main.py
+#
+# Mudanças vs V24.5:
+# 32. (V24.6) BUG DE CÁLCULO corrigido: monotonia e strain agora incluem
+#     os dias OFF da janela (carga 0). Antes só dias com treino entravam no
+#     desvio padrão, o que inflava a monotonia sistematicamente — descanso é
+#     o maior contraste possível e estava sumindo da conta. Efeito real é
+#     grande (numa semana 5 treinos + 2 off, monotonia cai muito). Usa o
+#     periodo (INI a FIM) para preencher a janela; fallback para o
+#     comportamento antigo se o periodo não parsear.
+# 33. (V24.6) Painel do /prontidao mostra "Cargas 7d: Seg X | Ter Y | ..."
+#     (tira a monotonia da caixa-preta) e bloco "Wellness" numérico: valor
+#     de hoje vs média 7d, faixa ±1DP e baseline 28d por métrica (HRV/RHR/
+#     sono). Dados já existiam no status_baseline; só faltava expor
+#     ultimo_valor.
+#
+# ⚠️ ATENÇÃO — FAIXAS DE STRAIN AGORA OBSOLETAS:
+#   As faixas (80/150/170/200) e os cortes fracionados da V24.5 foram
+#   calibrados sobre strain INFLADO (cálculo sem dias off). Com a correção
+#   da V24.6, todos os strains caem — um "178 alto" pode virar "90 moderado".
+#   NÃO recalibrar de bancada: rodar dias reais com o cálculo novo, observar
+#   os strains verdadeiros, e SÓ ENTÃO recalibrar — idealmente via baseline
+#   individual de strain (14 dias), que torna a faixa fixa obsoleta de vez.
 #
 # Mudanças vs V24.4:
 # 31. (V24.5) Pontuação FRACIONADA no /prontidao + estado "Treinar com
@@ -1277,15 +1299,33 @@ def calcular_indicadores(d, baseline=None):
         else "cortes genéricos (histórico de wellness insuficiente para baseline)"
     )
 
-        # cargas diárias
+        # cargas diárias (V24.6: inclui TODOS os dias da janela, inclusive
+        # off com carga 0. Antes só dias com treino entravam, o que inflava
+        # a monotonia — descanso É contraste e estava sumindo da conta.)
     cargas_por_dia = {}
+
+    # Preenche a janela inteira com 0 (extraída do periodo "INI a FIM")
+    try:
+        _ini_str, _fim_str = (d.get("periodo") or "").split(" a ")
+        _ini = datetime.fromisoformat(_ini_str.strip()).date()
+        _fim = datetime.fromisoformat(_fim_str.strip()).date()
+        _dia = _ini
+        while _dia <= _fim:
+            cargas_por_dia[_dia.isoformat()] = 0
+            _dia += timedelta(days=1)
+    except Exception:
+        # Sem periodo parseável, cai no comportamento antigo (só dias com treino)
+        pass
 
     for t in treinos:
         data = t.get("data")
         if not data:
             continue
-
-        cargas_por_dia[data] = cargas_por_dia.get(data, 0) + _carga(t)
+        if data in cargas_por_dia:
+            cargas_por_dia[data] += _carga(t)
+        else:
+            # treino fora da janela preenchida (defensivo): inclui mesmo assim
+            cargas_por_dia[data] = cargas_por_dia.get(data, 0) + _carga(t)
 
     cargas_lista = list(cargas_por_dia.values())
 
@@ -1402,6 +1442,7 @@ def calcular_indicadores(d, baseline=None):
         "maior_treino_distancia": treino_resumo(maior_distancia),
         "monotonia_carga": monotonia,
         "strain": strain,
+        "cargas_diarias_janela": cargas_por_dia,  # V24.6: para exibir no painel
         "metricas_natacao": metricas_natacao,
         "ftp_bike_detectado": ftp_bike_detectado,
         "eftp_intervals": eftp,
@@ -1455,10 +1496,12 @@ def status_baseline(pontos, fim=None, janela_curta=7, janela_base=28):
         status = "equilibrado"
 
     ultimo_dia = pontos[-1].get("data")
+    ultimo_valor = pontos[-1].get("valor")
     fim_str = fim.isoformat() if hasattr(fim, "isoformat") else (str(fim) if fim else None)
 
     return {
         "status": status,
+        "ultimo_valor": round(ultimo_valor, 1) if ultimo_valor is not None else None,
         "media_7d": round(media_recente, 1),
         "baseline_28d": round(media_base, 1),
         "limite_inferior": round(limite_inferior, 1),
@@ -2742,8 +2785,47 @@ def calcular_prontidao(d):
             "strain": ind.get("strain"),
             "carga_ontem": carga_ontem or None,
             "carga_media_dia": carga_dia or None,
+            "cargas_diarias": ind.get("cargas_diarias_janela"),  # V24.6
+            "wellness": {  # V24.6: valores numéricos para o painel
+                "hrv": hrv_st,
+                "rhr": rhr_st,
+                "sono_h": sono_st,
+            },
         }),
     }
+
+
+def linha_wellness_prontidao(nome, st, sufixo=""):
+    """V24.6: linha numérica de wellness no painel — tira o status da
+    caixa-preta mostrando valor de hoje, média 7d, faixa e baseline."""
+    if not st:
+        return f"  {nome}: sem baseline suficiente"
+    valor = st.get("ultimo_valor")
+    label = "hoje" if st.get("inclui_fim_periodo") else f"último ({st.get('ultimo_dia')})"
+    return (
+        f"  {nome}: {label} {valor}{sufixo} | "
+        f"média 7d {st.get('media_7d')}{sufixo} | "
+        f"faixa {st.get('limite_inferior')}-{st.get('limite_superior')}{sufixo} | "
+        f"baseline {st.get('baseline_28d')}{sufixo} | "
+        f"{st.get('status')}"
+    )
+
+
+def formatar_cargas_diarias(cargas):
+    """V24.6: linha compacta das cargas por dia, para o usuário ver por que
+    a monotonia subiu ou caiu. Ex: 'Seg 80 | Ter 70 | Qua 0 | ...'"""
+    if not cargas:
+        return None
+    dias_pt = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+    partes = []
+    for data in sorted(cargas.keys()):
+        try:
+            dt = datetime.fromisoformat(data)
+            rotulo = dias_pt[dt.weekday()]
+        except Exception:
+            rotulo = data[-2:]
+        partes.append(f"{rotulo} {round(cargas[data])}")
+    return " | ".join(partes)
 
 
 def formatar_prontidao(p):
@@ -2848,6 +2930,20 @@ def formatar_prontidao(p):
         if ctx.get("carga_ontem") is not None:
             ref = f" (média/dia: {ctx['carga_media_dia']})" if ctx.get("carga_media_dia") else ""
             linhas.append(f"  Carga ontem: {ctx['carga_ontem']}{ref}")
+
+        # V24.6: cargas por dia da janela — tira a monotonia da caixa-preta
+        linha_cargas = formatar_cargas_diarias(ctx.get("cargas_diarias"))
+        if linha_cargas:
+            linhas.append(f"  Cargas 7d: {linha_cargas}")
+
+        # V24.6: wellness numérico (valor de hoje vs média/faixa/baseline)
+        well = ctx.get("wellness") or {}
+        if any(well.get(k) for k in ("hrv", "rhr", "sono_h")):
+            linhas.append("")
+            linhas.append("Wellness:")
+            linhas.append(linha_wellness_prontidao("HRV", well.get("hrv")))
+            linhas.append(linha_wellness_prontidao("RHR", well.get("rhr"), " bpm"))
+            linhas.append(linha_wellness_prontidao("Sono", well.get("sono_h"), " h"))
 
     # V21.1: transparência sobre frescura do dado
     if p.get("avisos"):
