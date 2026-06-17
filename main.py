@@ -1,4 +1,17 @@
-# Sophos V24.6 – main.py
+# Sophos V24.7 – main.py
+#
+# Mudanças vs V24.6:
+# 34. (V24.7) /prontidao não conta mais o dia de HOJE na monotonia/strain.
+#     Efeito colateral da V24.6: ao incluir dias off, o dia atual (parcial,
+#     em andamento) entrava como off-zero e inflava a métrica para baixo
+#     artificialmente — "Qua 0" às 7h da manhã não é descanso, é "ainda não
+#     treinou". calcular_indicadores aceita excluir_dia; só o /prontidao usa
+#     (passa hoje), porque ele responde "como cheguei hoje?", sobre dias
+#     fechados. /relatorio e /analise NÃO excluem — para eles a monotonia do
+#     período inclui todos os dias corretamente. Painel separa "Cargas 7d
+#     (fechados)" de "Hoje até agora: X (não entra na monotonia/strain)".
+#     A exclusão afeta SÓ monotonia/strain; ACWR/distribuição/destaques
+#     continuam vendo o dia de hoje.
 #
 # Mudanças vs V24.5:
 # 32. (V24.6) BUG DE CÁLCULO corrigido: monotonia e strain agora incluem
@@ -1182,7 +1195,12 @@ def normalizar_data_br(data_str):
 
     raise ValueError(f"Data inválida: {data_str}")
 
-def calcular_indicadores(d, baseline=None):
+def calcular_indicadores(d, baseline=None, excluir_dia=None):
+    """V24.7: excluir_dia (ISO date str) remove um dia do cálculo de
+    monotonia/strain — usado pelo /prontidao para não contar o dia de HOJE,
+    que está em andamento e entraria como off-zero, melhorando a métrica
+    artificialmente. Só afeta monotonia/strain/cargas_diarias_janela; ACWR,
+    distribuição e destaques continuam vendo todos os treinos."""
     totais = d.get("totais", {})
     cond = d.get("condicionamento", {})
     rec = d.get("recuperacao", {})
@@ -1327,7 +1345,13 @@ def calcular_indicadores(d, baseline=None):
             # treino fora da janela preenchida (defensivo): inclui mesmo assim
             cargas_por_dia[data] = cargas_por_dia.get(data, 0) + _carga(t)
 
-    cargas_lista = list(cargas_por_dia.values())
+    # V24.7: para o /prontidao pré-treino, remove o dia de hoje (parcial)
+    # do cálculo — senão "hoje 0" entra como off e infla a métrica para cima.
+    cargas_para_calculo = dict(cargas_por_dia)
+    if excluir_dia and excluir_dia in cargas_para_calculo:
+        del cargas_para_calculo[excluir_dia]
+
+    cargas_lista = list(cargas_para_calculo.values())
 
     if len(cargas_lista) >= 2:
         media_carga_diaria = sum(cargas_lista) / len(cargas_lista)
@@ -1442,7 +1466,9 @@ def calcular_indicadores(d, baseline=None):
         "maior_treino_distancia": treino_resumo(maior_distancia),
         "monotonia_carga": monotonia,
         "strain": strain,
-        "cargas_diarias_janela": cargas_por_dia,  # V24.6: para exibir no painel
+        "cargas_diarias_janela": cargas_para_calculo,  # V24.7: sem o dia excluído
+        "dia_excluido_calculo": excluir_dia if (excluir_dia and excluir_dia in cargas_por_dia) else None,
+        "carga_dia_excluido": cargas_por_dia.get(excluir_dia) if excluir_dia else None,
         "metricas_natacao": metricas_natacao,
         "ftp_bike_detectado": ftp_bike_detectado,
         "eftp_intervals": eftp,
@@ -1569,7 +1595,7 @@ def coletar_baseline_wellness(base, auth, fim, janela_dias=35):
         print("Baseline indisponível:", e)
         return None
 
-def coletar_intervals(dias=7, inicio=None, fim=None):
+def coletar_intervals(dias=7, inicio=None, fim=None, excluir_dia_calculo=None):
     hoje = hoje_local()  # V21.1: data local, não UTC do servidor
 
     if inicio and fim:
@@ -1827,7 +1853,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None):
         "wellness_diario": wellness_diario,
     }
 
-    resultado["indicadores"] = calcular_indicadores(resultado, baseline)
+    resultado["indicadores"] = calcular_indicadores(resultado, baseline, excluir_dia=excluir_dia_calculo)
 
     return resultado
 
@@ -2785,7 +2811,9 @@ def calcular_prontidao(d):
             "strain": ind.get("strain"),
             "carga_ontem": carga_ontem or None,
             "carga_media_dia": carga_dia or None,
-            "cargas_diarias": ind.get("cargas_diarias_janela"),  # V24.6
+            "cargas_diarias": ind.get("cargas_diarias_janela"),  # V24.6 (sem hoje, V24.7)
+            "dia_excluido": ind.get("dia_excluido_calculo"),  # V24.7
+            "carga_hoje_parcial": ind.get("carga_dia_excluido"),  # V24.7
             "wellness": {  # V24.6: valores numéricos para o painel
                 "hrv": hrv_st,
                 "rhr": rhr_st,
@@ -2931,10 +2959,13 @@ def formatar_prontidao(p):
             ref = f" (média/dia: {ctx['carga_media_dia']})" if ctx.get("carga_media_dia") else ""
             linhas.append(f"  Carga ontem: {ctx['carga_ontem']}{ref}")
 
-        # V24.6: cargas por dia da janela — tira a monotonia da caixa-preta
+        # V24.6/V24.7: cargas por dia da janela (dias fechados) + hoje parcial
         linha_cargas = formatar_cargas_diarias(ctx.get("cargas_diarias"))
         if linha_cargas:
-            linhas.append(f"  Cargas 7d: {linha_cargas}")
+            linhas.append(f"  Cargas 7d (fechados): {linha_cargas}")
+        if ctx.get("dia_excluido") is not None:
+            carga_hoje = ctx.get("carga_hoje_parcial") or 0
+            linhas.append(f"  Hoje até agora: {round(carga_hoje)} (não entra na monotonia/strain)")
 
         # V24.6: wellness numérico (valor de hoje vs média/faixa/baseline)
         well = ctx.get("wellness") or {}
@@ -3258,7 +3289,9 @@ async def prontidao_command(update, context):
     )
 
     try:
-        d = coletar_intervals(dias=7)
+        # V24.7: hoje é dia parcial (em andamento). Excluí-lo do cálculo de
+        # monotonia/strain evita que "hoje 0" entre como off e infle a métrica.
+        d = coletar_intervals(dias=7, excluir_dia_calculo=hoje_local().isoformat())
     except Exception as e:
         print("Erro prontidao:", e)
         await context.bot.send_message(
