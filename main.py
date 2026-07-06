@@ -1,4 +1,24 @@
-# Sophos V24.7.1 – main.py
+# Sophos V24.7.2 – main.py
+#
+# Mudanças vs V24.7.1:
+# 36. (V24.7.2) Baseline de HRV/RHR passa de 28 para 60 dias (alinha com
+#     Garmin/Intervals.icu; fisiologia muda devagar, janela longa dá baseline
+#     mais estável). Média recente segue 7d. Só as CHAMADAS de
+#     status_baseline mudaram (janela_base=60) + a busca de wellness subiu
+#     de 35 para 67 dias para alimentar a janela nova — a lógica de
+#     classificação (baixo/desequilibrado/equilibrado/alto) está intacta, e
+#     status "alto" segue tratado como positivo na prontidão. Efeito
+#     colateral bom: com 28d o status "baixo" (2 desvios) era matematicamente
+#     inalcançável (7 recentes = 1/4 da base, shift máximo ~1.73 desvio);
+#     com 60d ele passa a existir. O campo baseline_28d mantém o nome por
+#     compatibilidade; o valor reflete a janela de 60d.
+#     SONO FICA EM 28d DE PROPÓSITO: a proposta de 14d degeneraria a
+#     classificação — com recentes (7d) = metade da base (14d), e o desvio
+#     calculado sobre a mesma janela que contém os recentes, a média recente
+#     NUNCA cruza ±1 desvio (provado + verificado com 200 mil séries:
+#     até colapso de sono 7h -> 0,5h lê "equilibrado"). Se um dia quiser
+#     detecção mais rápida no sono, o caminho é reduzir a janela CURTA
+#     (ex: curta=3 vs base=14), não a base — status_baseline já aceita.
 #
 # Mudanças vs V24.7:
 # 35. (V24.7.1) Dois acertos no /prontidao:
@@ -1549,11 +1569,15 @@ def status_baseline(pontos, fim=None, janela_curta=7, janela_base=28):
         "inclui_fim_periodo": (ultimo_dia == fim_str) if fim_str else None,
     }
 
-def coletar_baseline_wellness(base, auth, fim, janela_dias=35):
+def coletar_baseline_wellness(base, auth, fim, janela_dias=67):
     """V19.1: status de wellness estilo Garmin. Busca dedicada dos últimos
     'janela_dias' até o FIM do período analisado (não o wellness do período,
     que pode ter só 7 dias e inviabilizaria o cálculo). Ordena cronologicamente
-    e calcula, por métrica, média 7d vs baseline 28d com faixa de ±1 desvio.
+    e calcula, por métrica, média 7d vs baseline com faixa de ±1 desvio.
+    V24.7.2: baseline de HRV/RHR subiu para 60d (sono segue 28d — ver
+    changelog #36: base de 14d degeneraria a classificação). janela_dias
+    subiu de 35 para 67 (60 + margem); sem isso a busca devolveria ~35
+    pontos e o baseline de 60d nunca se materializaria.
     Falha silenciosa: retorna None e o sistema cai nos cortes genéricos."""
     try:
         base_old = fim - timedelta(days=janela_dias)
@@ -1589,11 +1613,18 @@ def coletar_baseline_wellness(base, auth, fim, janela_dias=35):
                         pass
             return pontos
 
+        # V24.7.2: janela de baseline por métrica. HRV/RHR: 60d (alinha com
+        # Garmin/Intervals — fisiologia muda devagar, baseline mais longo é
+        # mais estável). Sono: mantido em 28d — base de 14d com recentes de
+        # 7d torna qualquer status != "equilibrado" inalcançável (changelog #36).
         baseline = {
             "janela": f"{base_old.isoformat()} a {fim.isoformat()}",
-            "metodo": "media 7d vs baseline 28d, faixa de +/-1 desvio padrao",
-            "hrv": status_baseline(serie("hrv"), fim),
-            "rhr": status_baseline(serie("restingHR"), fim),
+            "metodo": (
+                "media 7d vs baseline (HRV/RHR 60d, sono 28d), "
+                "faixa de +/-1 desvio padrao"
+            ),
+            "hrv": status_baseline(serie("hrv"), fim, janela_base=60),
+            "rhr": status_baseline(serie("restingHR"), fim, janela_base=60),
             "sono_h": status_baseline(serie("sleepSecs", lambda s: s / 3600), fim),
         }
 
