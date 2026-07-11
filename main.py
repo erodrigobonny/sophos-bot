@@ -1,4 +1,26 @@
-# Sophos V24.7.2 – main.py
+# Sophos V24.8 – main.py
+#
+# Mudanças vs V24.7.2:
+# 37. (V24.8) Camada de ROTAÇÃO TRI no /prontidao — só leitura/observação,
+#     sem pontuação. Motivo: a monotonia agregada soma estresse de todas as
+#     modalidades e não distingue de onde veio; em triatlo, a rotação de
+#     estímulo entre corrida/bike/natação é um contraste que ela não
+#     captura. classificar_rotacao_tri() rotula cada um dos 7 dias FECHADOS
+#     (mesma janela de cargas_diarias_janela, carga efetiva via _carga):
+#     Off (carga 0), modalidade dominante (>=55% da carga total do dia;
+#     força/outros entram no total mas não disputam dominância) ou Misto.
+#     Painel ganha: linha dos 7 dias, distribuição % da semana (sobre os
+#     mesmos dias fechados exibidos em "Cargas 7d") e uma Leitura que cruza
+#     a rotação com monotonia/strain JÁ calculados — regra dos 3 dias mais
+#     carregados (3 modalidades distintas = boa rotação | 2 = moderada |
+#     1 = concentrada; Misto não conta como modalidade, é reportado à
+#     parte) + detecção de 3+ dias CONSECUTIVOS (calendário) da mesma
+#     modalidade dominante (Off e Misto quebram a sequência). A Leitura só
+#     aparece quando há alerta agregado (monotonia > 2.0 ou strain >= 150).
+#     NÃO altera monotonia/strain, NÃO soma pontos/nivel/rotulo/acao, NÃO
+#     cria monotonia por modalidade (amostra de 7 dias por modalidade é
+#     pequena demais — decisão explícita), zero chamada nova a API/GPT.
+#     Escopo: SOMENTE /prontidao.
 #
 # Mudanças vs V24.7.1:
 # 36. (V24.7.2) Baseline de HRV/RHR passa de 28 para 60 dias (alinha com
@@ -2609,6 +2631,110 @@ def filtrar_dados_para_analise(d, dominios):
 # V21: PRONTIDÃO DIÁRIA (semáforo 100% Python, custo zero de GPT)
 # =============================================================================
 
+def classificar_rotacao_tri(treinos, cargas_diarias_janela):
+    """V24.8: camada de rotação tri do /prontidao — SÓ leitura/observação.
+    A monotonia agregada soma estresse de todas as modalidades e não
+    distingue de onde ele veio; em triatlo, a rotação corrida/bike/natação
+    é um contraste de estímulo que ela não captura. Esta função rotula
+    cada dia FECHADO da janela (mesmas chaves de cargas_diarias_janela)
+    como Off, Misto ou modalidade dominante (>=55% da carga TOTAL do dia,
+    via carga efetiva). Força/outros entram no total do dia mas não
+    disputam dominância. Não altera monotonia/strain nem soma pontos.
+    Retorna None sem janela; nunca levanta exceção para o chamador."""
+    if not cargas_diarias_janela:
+        return None
+
+    TRI = ("corrida", "bike", "natacao")
+    datas = sorted(cargas_diarias_janela.keys())
+
+    # Carga por modalidade por dia (carga efetiva, mesmos grupos do resto)
+    por_dia = {data: {} for data in datas}
+    for t in treinos or []:
+        data = t.get("data")
+        if data not in por_dia:
+            continue
+        tipo = (t.get("tipo") or "").lower()
+        grupo = "outros"
+        for dom, marcadores in MAPA_TIPO_DOMINIO.items():
+            if any(m in tipo for m in marcadores):
+                grupo = dom
+                break
+        por_dia[data][grupo] = por_dia[data].get(grupo, 0) + _carga(t)
+
+    # Rótulo de cada dia, em ordem calendário
+    dias = []
+    for data in datas:
+        total = cargas_diarias_janela.get(data) or 0
+        dominante = None
+        if total <= 0:
+            rotulo = "Off"
+        else:
+            for dom in TRI:
+                if (por_dia[data].get(dom, 0) / total) >= 0.55:
+                    dominante = dom
+                    break
+            rotulo = NOMES_DOMINIO[dominante] if dominante else "Misto"
+        dias.append({"data": data, "rotulo": rotulo, "dominante": dominante})
+
+    # Distribuição % da semana, só sobre os dias fechados da janela
+    # (para bater com a linha "Cargas 7d" exibida no painel)
+    total_semana = sum((cargas_diarias_janela.get(d) or 0) for d in datas)
+    carga_grupo = {}
+    for data in datas:
+        for grupo, c in por_dia[data].items():
+            carga_grupo[grupo] = carga_grupo.get(grupo, 0) + c
+    distribuicao_pct = {}
+    if total_semana:
+        for grupo, c in sorted(carga_grupo.items(), key=lambda kv: -kv[1]):
+            pct = round((c / total_semana) * 100, 1)
+            if pct > 0:
+                distribuicao_pct[grupo] = pct
+
+    # Regra dos 3 dias mais carregados: Misto NÃO conta como modalidade —
+    # é excluído da contagem e reportado à parte. Off (carga 0) idem.
+    top3 = sorted(dias, key=lambda x: -(cargas_diarias_janela.get(x["data"]) or 0))[:3]
+    dominantes_top3 = [x["dominante"] for x in top3 if x["dominante"]]
+    n_distintas = len(set(dominantes_top3))
+    dias_misto_top3 = sum(1 for x in top3 if x["rotulo"] == "Misto")
+
+    if n_distintas >= 3:
+        classificacao = "boa rotação"
+    elif n_distintas == 2:
+        classificacao = "rotação moderada"
+    elif n_distintas == 1:
+        classificacao = "carga concentrada"
+    else:
+        classificacao = None  # top 3 todo Misto/Off — sem base para julgar
+
+    # Sequências consecutivas (ordem CALENDÁRIO) de mesma modalidade
+    # dominante. Off e Misto QUEBRAM a sequência — não continuam nem
+    # iniciam contagem.
+    seq_max = {"modalidade": None, "dias": 0}
+    atual_dom, atual_len = None, 0
+    for x in dias:
+        if x["dominante"] and x["dominante"] == atual_dom:
+            atual_len += 1
+        elif x["dominante"]:
+            atual_dom, atual_len = x["dominante"], 1
+        else:
+            atual_dom, atual_len = None, 0
+        if atual_len > seq_max["dias"]:
+            seq_max = {"modalidade": NOMES_DOMINIO[atual_dom], "dias": atual_len}
+
+    return {
+        "dias": dias,
+        "distribuicao_pct": distribuicao_pct,
+        "top3": {
+            "modalidades_distintas": n_distintas,
+            "dominantes": sorted(set(NOMES_DOMINIO[d] for d in dominantes_top3)),
+            "dias_misto": dias_misto_top3,
+            "classificacao": classificacao,
+        },
+        "sequencia_max": seq_max if seq_max["dias"] else None,
+        "alerta_sequencia": seq_max["dias"] >= 3,
+    }
+
+
 def calcular_prontidao(d):
     """V21: semáforo de prontidão por pontuação de risco.
     0-1 ponto = 🟢 verde | 2-4 = 🟡 amarelo | 5+ = 🔴 vermelho.
@@ -2836,6 +2962,16 @@ def calcular_prontidao(d):
     if not bl:
         motivos.append("baseline indisponível — leitura com confiabilidade reduzida")
 
+    # V24.8: camada de rotação tri — observação pura, não entra em pontos,
+    # nivel, rotulo ou acao. Falha silenciosa: painel sai sem a linha.
+    try:
+        rotacao_tri = classificar_rotacao_tri(
+            treinos, ind.get("cargas_diarias_janela")
+        )
+    except Exception as e:
+        print("Erro rotação tri:", e)
+        rotacao_tri = None
+
     return {
         "nivel": nivel,
         "emoji": emoji,
@@ -2846,6 +2982,7 @@ def calcular_prontidao(d):
         "acao": acao,
         "avisos": avisos,
         "dados_ate": dados_ate,
+        "rotacao_tri": rotacao_tri,
         "contexto": limpar_vazios({
             "ctl": cond.get("fitness_ctl"),
             "atl": cond.get("fadiga_atl"),
@@ -3011,6 +3148,65 @@ def formatar_prontidao(p):
         if ctx.get("dia_excluido") is not None:
             carga_hoje = ctx.get("carga_hoje_parcial") or 0
             linhas.append(f"  Hoje até agora: {round(carga_hoje)} (não entra na monotonia/strain)")
+
+        # V24.8: rotação tri — contextualiza a monotonia AGREGADA mostrando
+        # como a carga girou entre modalidades. Só leitura; zero pontuação.
+        rot = p.get("rotacao_tri")
+        if rot and rot.get("dias"):
+            linhas.append(
+                "  Rotação tri 7d: " + " | ".join(x["rotulo"] for x in rot["dias"])
+            )
+            dist = rot.get("distribuicao_pct") or {}
+            if dist:
+                linhas.append(
+                    "  Distribuição: " + " | ".join(
+                        f"{NOMES_DOMINIO.get(g, g).lower()} {round(pct)}%"
+                        for g, pct in dist.items()
+                    )
+                )
+
+            # Leitura só quando há alerta de carga agregada para
+            # contextualizar (mesmas faixas visuais já usadas no painel:
+            # monotonia > 2.0 ou strain >= 150).
+            _mono = ctx.get("monotonia")
+            _strain = ctx.get("strain")
+            alerta_agregado = (
+                (_mono is not None and _mono > 2.0)
+                or (_strain is not None and _strain >= 150)
+            )
+            if alerta_agregado:
+                top3 = rot.get("top3") or {}
+                seq = rot.get("sequencia_max") or {}
+                seq3 = rot.get("alerta_sequencia")
+                nota_misto = (
+                    f" ({top3['dias_misto']} dos 3 dias mais carregados foram Misto)"
+                    if top3.get("dias_misto") else ""
+                )
+
+                if top3.get("classificacao") == "carga concentrada" or seq3:
+                    if seq3:
+                        alvo = seq.get("modalidade")
+                        detalhe = f" ({seq.get('dias')} dias seguidos de {alvo})"
+                    else:
+                        alvo = (top3.get("dominantes") or ["uma modalidade"])[0]
+                        detalhe = ""
+                    linhas.append(
+                        f"  Leitura rotação: carga concentrada em {str(alvo).lower()}, "
+                        f"com repetição de impacto em dias próximos; alerta local "
+                        f"relevante{detalhe}.{nota_misto}"
+                    )
+                elif top3.get("classificacao") == "boa rotação":
+                    linhas.append(
+                        "  Leitura rotação: monotonia agregada alta, mas com boa "
+                        "rotação de estímulos entre modalidades; alerta local menor."
+                        + nota_misto
+                    )
+                elif top3.get("classificacao") == "rotação moderada":
+                    linhas.append(
+                        "  Leitura rotação: rotação moderada de estímulos entre "
+                        "modalidades; parte do alerta agregado é atenuada."
+                        + nota_misto
+                    )
 
         # V24.6: wellness numérico (valor de hoje vs média/faixa/baseline)
         well = ctx.get("wellness") or {}
