@@ -1,4 +1,25 @@
-# Sophos V24.8 – main.py
+# Sophos V24.8.1 – main.py
+#
+# Mudanças vs V24.8:
+# 38. (V24.8.1) Dois ajustes:
+#     a) Rotação tri: quando 2+ dos 3 dias mais carregados são Misto, a
+#        classificação vira "predominio_misto" e PREVALECE sobre a contagem
+#        de modalidades distintas — um único dia dominante restante não
+#        caracteriza mais "carga concentrada". Leitura própria no painel
+#        ("dias mais carregados majoritariamente mistos"). E o texto de
+#        concentração agora usa termo por modalidade: corrida = "repetição
+#        de impacto"; bike/natação = "repetição do mesmo estímulo" — o
+#        termo segue o alvo efetivamente usado na leitura, inclusive
+#        quando o alerta vem de sequencia_max.
+#     b) Janela efetiva do baseline exposta: status_baseline() retorna
+#        janela_base_dias (registros efetivamente usados). O "(28d)" fixo
+#        do /metricas virou a janela real de cada métrica, o cabeçalho
+#        "STATUS WELLNESS" e a observacao_alerta deixam de afirmar janela
+#        única, e os prompts de relatório/análise explicam o campo:
+#        baseline_28d é NOME LEGADO (mantido por compatibilidade — outras
+#        partes do sistema e estados salvos dependem dele) com o valor
+#        médio da janela da métrica; HRV/RHR usam até 60 registros, sono
+#        até 28.
 #
 # Mudanças vs V24.7.2:
 # 37. (V24.8) Camada de ROTAÇÃO TRI no /prontidao — só leitura/observação,
@@ -416,8 +437,10 @@ REGRAS:
 - Se alerta_recuperacao vier moderado/alto, recomende reduzir intensidade e priorizar sono.
 - Se houver "baseline" nos dados, ele traz por métrica (HRV, RHR, sono): status
   (baixo/desequilibrado/equilibrado/alto), media_7d, baseline_28d, limites e
-  variacao_pct. Interprete: HRV baixo/desequilibrado e RHR alto = recuperação
-  comprometida. Cite a variacao_pct.
+  variacao_pct. baseline_28d é nome legado: contém o valor médio da janela da
+  métrica; janela_base_dias informa quantos registros foram usados (HRV/RHR
+  podem usar até 60 registros; sono usa até 28). Interprete: HRV
+  baixo/desequilibrado e RHR alto = recuperação comprometida. Cite a variacao_pct.
 - Priorize conclusão sobre descrição. Cada insight aparece uma vez.
 
 ESTILO:
@@ -477,7 +500,10 @@ REGRAS:
 - Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
 - Se houver "baseline" nos dados, ele traz por métrica: status
   (baixo/desequilibrado/equilibrado/alto), media_7d, baseline_28d e
-  variacao_pct. HRV baixo/desequilibrado e RHR alto = recuperação comprometida.
+  variacao_pct. baseline_28d é nome legado: contém o valor médio da janela da
+  métrica; janela_base_dias informa quantos registros foram usados (HRV/RHR
+  podem usar até 60 registros; sono usa até 28). HRV baixo/desequilibrado e
+  RHR alto = recuperação comprometida.
 - Cite semanas específicas (número e intervalo) ao apontar blocos fortes,
   fracos ou de fadiga acumulada.
 - resumo_semanal inclui rampa média por semana (CTL/sem): >8 agressiva |
@@ -518,8 +544,10 @@ REGRAS:
 - Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
 - Se houver "baseline" nos dados, ele traz por métrica: status
   (baixo/desequilibrado/equilibrado/alto), media_7d, baseline_28d e
-  variacao_pct. HRV baixo/desequilibrado e RHR alto = recuperação
-  comprometida. Cite a variacao_pct.
+  variacao_pct. baseline_28d é nome legado: contém o valor médio da janela da
+  métrica; janela_base_dias informa quantos registros foram usados (HRV/RHR
+  podem usar até 60 registros; sono usa até 28). HRV baixo/desequilibrado e
+  RHR alto = recuperação comprometida. Cite a variacao_pct.
 - Se houver "cargas_diarias", correlacione com as métricas pedidas
   (ex: sono ruim após dias de carga alta).
 - Priorize conclusão sobre descrição. Cada insight aparece uma vez.
@@ -1318,7 +1346,8 @@ def calcular_indicadores(d, baseline=None, excluir_dia=None):
     alerta_recuperacao = "baixo"
     sinais = []
 
-    # V19.1: usa o status estilo Garmin (7d vs 28d ± 1 desvio) quando
+    # V19.1: usa o status estilo Garmin (7d vs baseline por métrica ± 1
+    # desvio; HRV/RHR até 60d, sono até 28d) quando
     # disponível; senão cai nos cortes genéricos da V18.
     # Semântica por métrica: HRV baixo = ruim | RHR ALTO = ruim | sono baixo = ruim.
     bl = baseline or {}
@@ -1363,7 +1392,8 @@ def calcular_indicadores(d, baseline=None, excluir_dia=None):
         alerta_recuperacao = "moderado"
 
     observacao_alerta = (
-        "status 7d vs baseline 28d com faixa de ±1 desvio padrão (estilo Garmin)"
+        "status 7d vs baseline por métrica (HRV/RHR até 60d, sono até 28d) "
+        "com faixa de ±1 desvio padrão (estilo Garmin)"
         if usa_baseline
         else "cortes genéricos (histórico de wellness insuficiente para baseline)"
     )
@@ -1538,11 +1568,16 @@ def calcular_indicadores(d, baseline=None, excluir_dia=None):
     }
 
 def status_baseline(pontos, fim=None, janela_curta=7, janela_base=28):
-    """V21.1: status estilo Garmin — média dos últimos 7 registros vs
-    baseline de 28, com faixa de ±1 desvio padrão.
+    """V21.1: status estilo Garmin — média dos últimos 'janela_curta'
+    registros vs baseline de até 'janela_base', com faixa de ±1 desvio
+    padrão. A janela varia por métrica (V24.7.2: HRV/RHR usam 60, sono 28).
     'pontos' = [{"data": "2026-06-10", "valor": 55.0}, ...]
-    Agora retorna também ultimo_dia e inclui_fim_periodo (frescura do dado),
-    para o /prontidao avisar quando o registro de hoje ainda não sincronizou.
+    Retorna também ultimo_dia e inclui_fim_periodo (frescura do dado),
+    para o /prontidao avisar quando o registro de hoje ainda não sincronizou,
+    e janela_base_dias (V24.8.1) com quantos registros o baseline usou de
+    fato. A chave baseline_28d é NOME LEGADO — contém o valor médio da
+    janela efetiva, não necessariamente de 28 dias; não renomear (outras
+    partes do sistema e estados salvos dependem dela).
     Retorna None com menos de 14 registros (status não confiável)."""
     pontos = [p for p in (pontos or []) if p.get("valor") is not None]
     pontos.sort(key=lambda p: p.get("data") or "")
@@ -1583,7 +1618,8 @@ def status_baseline(pontos, fim=None, janela_curta=7, janela_base=28):
         "status": status,
         "ultimo_valor": round(ultimo_valor, 1) if ultimo_valor is not None else None,
         "media_7d": round(media_recente, 1),
-        "baseline_28d": round(media_base, 1),
+        "baseline_28d": round(media_base, 1),  # nome legado; janela varia por métrica
+        "janela_base_dias": len(base),  # V24.8.1: registros efetivamente usados
         "limite_inferior": round(limite_inferior, 1),
         "limite_superior": round(limite_superior, 1),
         "variacao_pct": round(variacao_pct, 1) if variacao_pct is not None else None,
@@ -1904,7 +1940,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None, excluir_dia_calculo=None):
             "ramp": w.get("rampRate"),
         })
 
-    # V19.1: status de wellness (7d vs 28d) ancorado no FIM do período
+    # V19.1: status de wellness (7d vs baseline por métrica) ancorado no FIM do período
     baseline = coletar_baseline_wellness(base, auth, fim)
 
     resultado = {
@@ -2065,7 +2101,9 @@ def formatar_alerta(alerta):
 
 
 def formatar_baseline(bl):
-    """V19.1: exibe o status de wellness (7d vs baseline 28d) no /metricas."""
+    """V19.1: exibe o status de wellness (média 7d vs baseline por métrica)
+    no /metricas. V24.8.1: mostra a janela efetiva de cada métrica em vez
+    do "(28d)" fixo — HRV/RHR podem usar até 60 registros, sono até 28."""
     if not bl:
         return "sem dado (histórico de wellness insuficiente)"
 
@@ -2076,7 +2114,7 @@ def formatar_baseline(bl):
             return None
         texto = (
             f"{nome}: {st.get('media_7d')}{sufixo} (7d) vs "
-            f"{st.get('baseline_28d')}{sufixo} (28d) | "
+            f"{st.get('baseline_28d')}{sufixo} ({st.get('janela_base_dias')}d) | "
             f"variação {st.get('variacao_pct')}% | status: {st.get('status')}"
         )
         if st.get("ultimo_dia"):
@@ -2151,7 +2189,7 @@ def formatar_metricas(d):
     linhas.append(f"SpO2 médio: {valor(rec.get('spo2_medio'))}")
     linhas.append("")
 
-    linhas.append("3.1 STATUS WELLNESS (média 7d vs baseline 28d)")
+    linhas.append("3.1 STATUS WELLNESS (média 7d vs baseline por métrica)")
     linhas.append(formatar_baseline(d.get("baseline")))
     linhas.append("")
 
@@ -2697,7 +2735,12 @@ def classificar_rotacao_tri(treinos, cargas_diarias_janela):
     n_distintas = len(set(dominantes_top3))
     dias_misto_top3 = sum(1 for x in top3 if x["rotulo"] == "Misto")
 
-    if n_distintas >= 3:
+    # V24.8.1: 2+ dias Misto no top 3 prevalece sobre a contagem de
+    # modalidades — um único dia dominante restante não caracteriza
+    # concentração quando a maioria dos dias pesados foi mista.
+    if dias_misto_top3 >= 2:
+        classificacao = "predominio_misto"
+    elif n_distintas >= 3:
         classificacao = "boa rotação"
     elif n_distintas == 2:
         classificacao = "rotação moderada"
@@ -3190,10 +3233,25 @@ def formatar_prontidao(p):
                     else:
                         alvo = (top3.get("dominantes") or ["uma modalidade"])[0]
                         detalhe = ""
+                    # V24.8.1: "impacto" é específico da corrida; bike e
+                    # natação repetem estímulo, não impacto. O termo segue
+                    # o alvo efetivamente usado na leitura (inclusive
+                    # quando o alerta vem de sequencia_max).
+                    termo = (
+                        "repetição de impacto"
+                        if alvo == "Corrida"
+                        else "repetição do mesmo estímulo"
+                    )
                     linhas.append(
                         f"  Leitura rotação: carga concentrada em {str(alvo).lower()}, "
-                        f"com repetição de impacto em dias próximos; alerta local "
+                        f"com {termo} em dias próximos; alerta local "
                         f"relevante{detalhe}.{nota_misto}"
+                    )
+                elif top3.get("classificacao") == "predominio_misto":
+                    linhas.append(
+                        "  Leitura rotação: os dias mais carregados foram "
+                        "majoritariamente mistos; não há concentração clara "
+                        "em uma única modalidade."
                     )
                 elif top3.get("classificacao") == "boa rotação":
                     linhas.append(
