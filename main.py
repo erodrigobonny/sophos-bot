@@ -1,4 +1,24 @@
-# Sophos V24.8.3 – main.py
+# Sophos V24.8.4 – main.py
+#
+# Mudanças vs V24.8.3:
+# 41. (V24.8.4) Revisão do /prontidao ia SEM treino (o modo continua
+#     ativo — só prompt/payload/token mudaram):
+#     - Prompt virou "detector de exceção material" em vez de "procure um
+#       insight": dois filtros obrigatórios (NOVIDADE: não está escrito no
+#       painel nem é dedução óbvia entre números exibidos; IMPACTO: muda a
+#       confiança no semáforo, a leitura carga vs recuperação, a adequação
+#       da ação ou a confiabilidade dos dados), lista explícita do que NÃO
+#       conta como insight (ex.: divisão simples entre valores já
+#       mostrados) e abstenção preferível a comentário correto porém óbvio.
+#     - Payload desse modo perdeu motivos/positivos do
+#       resultado_deterministico (já aparecem no painel e induziam
+#       paráfrase); nivel/rotulo/pontos/acao permanecem. Modo COM treino
+#       segue com o resultado completo, prompt, tags <TREINO_PLANEJADO>,
+#       formato DECISÃO e max_tokens=400 inalterados.
+#     - max_tokens do modo sem treino reduzido para 200.
+#     Modelo continua MODEL_FAST (Luna) nos dois modos — troca para Terra
+#     fica em aberto, só se a evidência de uso mostrar que o prompt novo
+#     ainda não basta.
 #
 # Mudanças vs V24.8.2:
 # 40. (V24.8.3) Três ajustes:
@@ -3760,15 +3780,21 @@ async def prontidao_command(update, context):
             # o objeto inteiro (com emoji, lista dia-a-dia da rotação etc.)
             # era ruído para a auditoria.
             _rot = p.get("rotacao_tri") or {}
+            # V24.8.4: no modo SEM treino, motivos/positivos ficam FORA do
+            # payload — já aparecem no painel e induziam o modelo a
+            # parafraseá-los como se fossem insight. No modo com treino o
+            # resultado segue completo (a avaliação precisa deles).
+            resultado_det = {
+                "nivel": p.get("nivel"),
+                "rotulo": p.get("rotulo"),
+                "pontos": p.get("pontos"),
+                "acao": p.get("acao"),
+            }
+            if treino_planejado:
+                resultado_det["motivos"] = p.get("motivos")
+                resultado_det["positivos"] = p.get("positivos")
             payload_ia = limpar_vazios({
-                "resultado_deterministico": {
-                    "nivel": p.get("nivel"),
-                    "rotulo": p.get("rotulo"),
-                    "pontos": p.get("pontos"),
-                    "acao": p.get("acao"),
-                    "motivos": p.get("motivos"),
-                    "positivos": p.get("positivos"),
-                },
+                "resultado_deterministico": resultado_det,
                 "contexto": p.get("contexto"),
                 "rotacao_tri": {
                     "distribuicao_pct": _rot.get("distribuicao_pct"),
@@ -3819,38 +3845,58 @@ async def prontidao_command(update, context):
                     f"DADOS (JSON):\n{resumo_json}"
                 )
             else:
-                # MODO 1: auditoria complementar antirrepetição
+                # MODO 1 (V24.8.4): detector de exceção material — dois
+                # filtros obrigatórios (novidade + impacto), lista explícita
+                # de não-insights, abstenção preferível a comentário óbvio.
                 prompt_ia = (
-                    "Você recebeu um semáforo de prontidão já calculado por "
-                    "regras determinísticas. Sua função é auditoria "
-                    "complementar, não reescrever o painel. Não repita: a "
-                    "ação; os motivos; os pontos positivos; o rótulo; números "
-                    "autoexplicativos; recomendações já presentes.\n"
-                    "Procure somente UM insight adicional realmente útil "
-                    "obtido pelo cruzamento dos dados. Priorize:\n"
-                    "1. divergência entre recuperação fisiológica e carga "
-                    "estrutural;\n"
-                    "2. carga realizada hoje comparada à média dos dias "
-                    "fechados;\n"
-                    "3. concentração de modalidade comparada à distribuição "
-                    "semanal;\n"
-                    "4. indicadores aparentemente normais que, em conjunto, "
-                    "mudem a leitura;\n"
-                    "5. limitações ou contradições da recomendação "
-                    "determinística;\n"
-                    "6. dado desatualizado ou corrigido que reduza a confiança "
-                    "da decisão.\n"
-                    "Monotonia e strain altos, isoladamente, indicam carga "
-                    "estrutural alta ou uniforme. NÃO use esses indicadores "
-                    "sozinhos para afirmar fadiga fisiológica, corpo cansado "
-                    "ou recuperação comprometida — isso exige apoio de HRV, "
-                    "RHR, sono ou outro indicador fisiológico presente.\n"
-                    "Não invente qual treino será feito. Não presuma sintomas, "
-                    "dor ou sensação de pernas. Não recalcule pontuação nem "
-                    "indicadores.\n"
-                    "Responda em no máximo 2 frases. Se não houver insight "
-                    "adicional de verdade, responda EXATAMENTE, sem texto "
-                    "antes ou depois:\n"
+                    "Você recebeu um semáforo de prontidão já calculado.\n"
+                    "Sua tarefa NÃO é comentar, resumir, explicar o cálculo "
+                    "nem procurar algo para dizer. Sua tarefa é detectar se "
+                    "existe uma EXCEÇÃO MATERIAL que o painel determinístico "
+                    "não deixou clara.\n"
+                    "Antes de responder, aplique obrigatoriamente dois "
+                    "filtros:\n"
+                    "1. NOVIDADE: o ponto não está explicitamente escrito no "
+                    "painel e não é uma conta, comparação ou dedução óbvia "
+                    "entre números já exibidos.\n"
+                    "2. IMPACTO: o ponto muda de forma relevante pelo menos "
+                    "um destes elementos — a confiança no semáforo; a "
+                    "interpretação entre carga estrutural e recuperação "
+                    "fisiológica; a adequação da ação determinística; a "
+                    "confiabilidade dos dados usados.\n"
+                    "Só responda com um insight quando os DOIS filtros forem "
+                    "satisfeitos.\n"
+                    "NÃO considere insight adicional:\n"
+                    "- dizer que a carga de hoje está acima ou abaixo da "
+                    "média;\n"
+                    "- explicar que hoje não entra na monotonia ou no "
+                    "strain;\n"
+                    "- repetir que a carga está concentrada em uma "
+                    "modalidade;\n"
+                    "- repetir que HRV, RHR ou sono estão equilibrados;\n"
+                    "- transformar monotonia ou strain em fadiga "
+                    "fisiológica;\n"
+                    "- realizar uma divisão simples entre dois valores já "
+                    "mostrados;\n"
+                    "- explicar como uma métrica funciona;\n"
+                    "- reformular a ação, os motivos ou os pontos "
+                    "positivos.\n"
+                    "Exceções materiais válidas incluem: contradição real "
+                    "entre a ação determinística e os dados; dados "
+                    "desatualizados ou corrigidos que comprometam a "
+                    "confiança; conflito entre indicadores independentes que "
+                    "altere a leitura; combinação de sinais que torne o "
+                    "semáforo claramente permissivo ou conservador demais; "
+                    "inconsistência interna entre métricas, classificação e "
+                    "recomendação.\n"
+                    "Não presuma sintomas, dor, cansaço, modalidade ou "
+                    "treino planejado.\n"
+                    "Não recalcule pontuação nem indicadores.\n"
+                    "Abstenção é preferível a um comentário correto, porém "
+                    "óbvio.\n"
+                    "Quando houver exceção material, explique somente essa "
+                    "exceção em no máximo 2 frases. Caso contrário, responda "
+                    "EXATAMENTE:\n"
                     "Sem insight adicional relevante.\n\n"
                     f"DADOS (JSON):\n{resumo_json}"
                 )
@@ -3861,7 +3907,9 @@ async def prontidao_command(update, context):
                     {"role": "user", "content": prompt_ia},
                 ],
                 model=MODEL_FAST,
-                max_tokens=400,
+                # V24.8.4: modo sem treino cabe em 200 (2 frases ou a
+                # abstenção); modo com treino mantém 400.
+                max_tokens=400 if treino_planejado else 200,
                 user_id=uid
             )
             bloco_ia = "🧠 Sophos: " + comentario.strip()
