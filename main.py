@@ -1,4 +1,18 @@
-# Sophos V24.8.1 – main.py
+# Sophos V24.8.2 – main.py
+#
+# Mudanças vs V24.8.1:
+# 39. (V24.8.2) FIX de contradição de leitura identificada na V24.8.1:
+#     em formatar_prontidao(), o bloco "carga concentrada or seq3" era
+#     avaliado ANTES do predominio_misto — com 2+ dias Misto no top 3 E
+#     uma sequência de 3+ dias da mesma modalidade em outro trecho da
+#     semana, o painel escrevia "carga concentrada em <modalidade>"
+#     contradizendo a classificação real (predomínio misto). Ordem
+#     corrigida: 1) predominio_misto (SEMPRE que for a classificação,
+#     com a sequência anexada como nota complementar se existir);
+#     2) carga concentrada ou seq3 (comportamento inalterado);
+#     3) boa rotação / rotação moderada (inalterados). Só a ordem de
+#     leitura no formatador mudou — classificar_rotacao_tri() e toda a
+#     pontuação seguem intactas.
 #
 # Mudanças vs V24.8:
 # 38. (V24.8.1) Dois ajustes:
@@ -3226,7 +3240,24 @@ def formatar_prontidao(p):
                     if top3.get("dias_misto") else ""
                 )
 
-                if top3.get("classificacao") == "carga concentrada" or seq3:
+                # V24.8.2: predomínio misto é checado ANTES do bloco de
+                # concentração — na V24.8.1 o "or seq3" capturava primeiro
+                # e escrevia "carga concentrada" mesmo quando a classificação
+                # real era predominio_misto (contradição de leitura). A
+                # sequência, se existir, vira nota complementar da frase de
+                # predomínio misto, nunca a frase de concentração.
+                if top3.get("classificacao") == "predominio_misto":
+                    nota_seq = (
+                        f" (obs: {seq.get('dias')} dias seguidos de "
+                        f"{seq.get('modalidade')} na semana)"
+                        if seq3 else ""
+                    )
+                    linhas.append(
+                        "  Leitura rotação: os dias mais carregados foram "
+                        "majoritariamente mistos; não há concentração clara "
+                        "em uma única modalidade." + nota_seq
+                    )
+                elif top3.get("classificacao") == "carga concentrada" or seq3:
                     if seq3:
                         alvo = seq.get("modalidade")
                         detalhe = f" ({seq.get('dias')} dias seguidos de {alvo})"
@@ -3246,12 +3277,6 @@ def formatar_prontidao(p):
                         f"  Leitura rotação: carga concentrada em {str(alvo).lower()}, "
                         f"com {termo} em dias próximos; alerta local "
                         f"relevante{detalhe}.{nota_misto}"
-                    )
-                elif top3.get("classificacao") == "predominio_misto":
-                    linhas.append(
-                        "  Leitura rotação: os dias mais carregados foram "
-                        "majoritariamente mistos; não há concentração clara "
-                        "em uma única modalidade."
                     )
                 elif top3.get("classificacao") == "boa rotação":
                     linhas.append(
