@@ -1,4 +1,21 @@
-# Sophos V24.8.4 – main.py
+# Sophos V24.8.5 – main.py
+#
+# Mudanças vs V24.8.4:
+# 42. (V24.8.5) FIX de conteúdo vazio no /prontidao ia sem treino: em uso
+#     real o painel veio com "🧠 Sophos:" sem texto. Causa provável (não
+#     confirmada por finish_reason/reasoning_tokens da chamada real, mas
+#     compatível com o comportamento documentado dos modelos de
+#     raciocínio): com max_tokens=200, o orçamento podia ser consumido por
+#     tokens de raciocínio interno antes da geração visível, devolvendo
+#     content vazio com finish_reason "length". Duas mudanças:
+#     - max_tokens do modo sem treino voltou de 200 para 400 (igual ao
+#       modo com treino) — reduz a chance, não elimina;
+#     - fallback defensivo nos DOIS modos para resposta None/vazia/só
+#       espaço: com treino, "Não foi possível concluir a avaliação do
+#       treino. Tente novamente." (não finge abstenção); sem treino, a
+#       abstenção padrão "Sem insight adicional relevante.".
+#     Modelo (MODEL_FAST/Luna), prompts dos dois modos e todo o resto
+#     inalterados.
 #
 # Mudanças vs V24.8.3:
 # 41. (V24.8.4) Revisão do /prontidao ia SEM treino (o modo continua
@@ -3901,18 +3918,33 @@ async def prontidao_command(update, context):
                     f"DADOS (JSON):\n{resumo_json}"
                 )
 
-            comentario = chamar_gpt_sync(
-                [
-                    {"role": "system", "content": ESTILO_SOPHOS},
-                    {"role": "user", "content": prompt_ia},
-                ],
-                model=MODEL_FAST,
-                # V24.8.4: modo sem treino cabe em 200 (2 frases ou a
-                # abstenção); modo com treino mantém 400.
-                max_tokens=400 if treino_planejado else 200,
-                user_id=uid
-            )
-            bloco_ia = "🧠 Sophos: " + comentario.strip()
+            # V24.8.5: max_tokens voltou a 400 nos dois modos — com 200, o
+            # orçamento podia ser consumido por tokens de raciocínio interno
+            # do modelo antes do texto visível, devolvendo content vazio
+            # (causa provável do "🧠 Sophos:" vazio visto em uso real).
+            comentario = (
+                chamar_gpt_sync(
+                    [
+                        {"role": "system", "content": ESTILO_SOPHOS},
+                        {"role": "user", "content": prompt_ia},
+                    ],
+                    model=MODEL_FAST,
+                    max_tokens=400,
+                    user_id=uid,
+                )
+                or ""
+            ).strip()
+            # V24.8.5: proteção contra resposta vazia/None/só espaço — o
+            # usuário nunca recebe um bloco "🧠 Sophos:" sem texto. Fallback
+            # por modo: com treino avisa que a avaliação falhou (não finge
+            # ser abstenção); sem treino usa a abstenção padrão.
+            if not comentario:
+                comentario = (
+                    "Não foi possível concluir a avaliação do treino. Tente novamente."
+                    if treino_planejado
+                    else "Sem insight adicional relevante."
+                )
+            bloco_ia = "🧠 Sophos: " + comentario
             if treino_planejado:
                 bloco_ia = f"Treino avaliado: {treino_planejado}\n" + bloco_ia
             texto += "\n\n" + bloco_ia
