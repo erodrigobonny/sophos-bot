@@ -1,4 +1,20 @@
-# Sophos V24.8.5 – main.py
+# Sophos V24.8.6 – main.py
+#
+# Mudanças vs V24.8.5:
+# 43. (V24.8.6) Correção de INTERPRETAÇÃO nos dois prompts do
+#     /prontidao ia (zero mudança em Python/pontuação/modelo): em uso
+#     real, o modo sem treino acusou "inconsistência" porque o HRV do dia
+#     (ultimo_valor 44.0) estava abaixo do limite inferior (44.4) de um
+#     status "equilibrado" — alerta FALSO: em status_baseline() a
+#     classificação compara media_7d (47.6, dentro da faixa 44.4-53.4)
+#     com os limites; ultimo_valor nunca entra na conta. Dois reforços:
+#     - nota explícita nos DOIS prompts (sem e com treino) de como o
+#       status é calculado e de que ultimo_valor pode ficar fora da faixa
+#       sem inconsistência — "nunca compare ultimo_valor com os limites
+#       para auditar a classificação";
+#     - item novo na lista de não-insights do detector de exceção
+#       material: valor diário fora da faixa com media_7d corretamente
+#       classificada não é inconsistência.
 #
 # Mudanças vs V24.8.4:
 # 42. (V24.8.5) FIX de conteúdo vazio no /prontidao ia sem treino: em uso
@@ -3849,6 +3865,13 @@ async def prontidao_command(update, context):
                     "Monotonia e strain altos não provam fadiga fisiológica "
                     "sozinhos — só use esses termos se HRV, RHR, sono ou outro "
                     "dado fisiológico sustentar isso.\n"
+                    "Nos dados de wellness, o campo \"status\" é calculado "
+                    "comparando \"media_7d\" com \"limite_inferior\" e "
+                    "\"limite_superior\". \"ultimo_valor\" representa apenas o "
+                    "registro mais recente e pode ficar fora da faixa sem "
+                    "tornar o status inconsistente. Nunca compare "
+                    "\"ultimo_valor\" com os limites para auditar a "
+                    "classificação.\n"
                     "Não invente duração, intensidade, volume, séries, zona, "
                     "modalidade, objetivo, sintomas ou disponibilidade do "
                     "atleta. Se a descrição for insuficiente, avalie só o "
@@ -3896,8 +3919,18 @@ async def prontidao_command(update, context):
                     "- realizar uma divisão simples entre dois valores já "
                     "mostrados;\n"
                     "- explicar como uma métrica funciona;\n"
+                    "- tratar o valor diário de HRV, RHR ou sono fora da "
+                    "faixa como inconsistência quando a media_7d estiver "
+                    "corretamente classificada;\n"
                     "- reformular a ação, os motivos ou os pontos "
                     "positivos.\n"
+                    "Nos dados de wellness, o campo \"status\" é calculado "
+                    "comparando \"media_7d\" com \"limite_inferior\" e "
+                    "\"limite_superior\". \"ultimo_valor\" representa apenas o "
+                    "registro mais recente e pode ficar fora da faixa sem "
+                    "tornar o status inconsistente. Nunca compare "
+                    "\"ultimo_valor\" com os limites para auditar a "
+                    "classificação.\n"
                     "Exceções materiais válidas incluem: contradição real "
                     "entre a ação determinística e os dados; dados "
                     "desatualizados ou corrigidos que comprometam a "
