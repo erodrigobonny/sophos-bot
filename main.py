@@ -1,4 +1,32 @@
-# Sophos V24.8.6 – main.py
+# Sophos V24.8.7 – main.py
+#
+# Mudanças vs V24.8.6:
+# 44. (V24.8.7) Dois ajustes:
+#     a) Ação do VERDE NORMAL reescrita. Caso real: verde 0.2 pts com
+#        "hoje é dia" e o atleta partiu para intensidade com pernas
+#        travadas — o cálculo estava certo, a LINGUAGEM não: o sistema só
+#        observa proxies autonômicas (HRV/RHR/sono) e modelos de carga
+#        (TSB/ACWR/monotonia/strain); nenhum mede condição muscular
+#        local. Texto novo pede confirmação no aquecimento e deixa
+#        explícito que rigidez/dor/fadiga incomum prevalecem sobre o
+#        sinal automático. Pontos, cortes, nivel, rotulo, emoji e as
+#        demais ações (ajuste/amarelo/vermelho) intactos.
+#     b) Percepção subjetiva OPCIONAL via token único pernas0-3 no
+#        /prontidao (qualquer posição após o comando; "ia" segue válido
+#        só como PRIMEIRO argumento — quer_ia é detectado antes de
+#        remover o token). Escala: 0 habituais | 1 leve rigidez |
+#        2 travadas (intensidade vetada em texto) | 3 dor (cortar e
+#        avaliar). Não informado = None, NUNCA tratado como normal, e o
+#        painel fica idêntico (silêncio por padrão). Malformado
+#        (pernas4/pernasX) é ignorado sem erro. É VETO DE TEXTO: nunca
+#        altera pontos/nivel/rotulo/acao. Quando informada: linha no
+#        painel (camada adicional, não substituição), entra no estado
+#        salvo (estado_atual/prontidao) e no payload da IA
+#        (percepcao_subjetiva), com regra de precedência nos DOIS
+#        prompts para o modelo não contradizer o veto (ex: painel
+#        vetando intensidade e IA concluindo DECISÃO: MANTER).
+#        /comandos atualizado. Sem tokens fadigaX/dor (redundantes) e
+#        sem inferência automática de fadiga muscular a partir de carga.
 #
 # Mudanças vs V24.8.5:
 # 43. (V24.8.6) Correção de INTERPRETAÇÃO nos dois prompts do
@@ -3130,7 +3158,16 @@ def calcular_prontidao(d):
         )
     else:
         nivel, emoji, rotulo = "verde", "🟢", "Treinar normal"
-        acao = "Sinal verde. Siga o plano; se houver intensidade programada, hoje é dia."
+        # V24.8.7: linguagem menos absoluta — o sistema só vê proxies
+        # autonômicas (HRV/RHR/sono) e modelos de carga (TSB/ACWR/mono/
+        # strain); nenhum mede condição muscular local. Caso real: verde
+        # 0.2 pts e o atleta partiu para tiros com pernas travadas.
+        acao = (
+            "Indicadores objetivos em verde. Siga o plano, mas confirme no "
+            "aquecimento se pernas, movimento, respiração e esforço percebido "
+            "estão normais antes de executar intensidade. Rigidez, dor ou "
+            "fadiga incomum prevalecem sobre o sinal automático."
+        )
 
     if not bl:
         motivos.append("baseline indisponível — leitura com confiabilidade reduzida")
@@ -3749,16 +3786,60 @@ async def combustivel_command(update, context):
     await enviar_texto_longo(context, update.effective_chat.id, texto)
 
 
+# V24.8.7: escala da percepção subjetiva de pernas (token pernasN).
+# Nenhuma métrica do sistema mede fadiga muscular local — esta é a única
+# entrada do atleta, e funciona como VETO DE TEXTO: nunca altera o score.
+PERCEPCAO_PERNAS = {
+    0: ("pernas e movimento habituais", "sem restrição"),
+    1: ("leve rigidez ou peso", "sem veto; confirmar no aquecimento"),
+    2: ("travadas ou fadiga muscular incomum",
+        "intensidade vetada; transformar em treino leve"),
+    3: ("dor ou movimento comprometido",
+        "cortar o treino planejado e avaliar antes de continuar"),
+}
+
+
+def ler_percepcao_pernas(valor):
+    """V24.8.7: classifica a percepção informada. None quando não
+    informado (NUNCA tratar ausência como 'normal'). Valor fora de 0-3
+    também retorna None — token malformado é ignorado em silêncio."""
+    if valor is None or valor not in PERCEPCAO_PERNAS:
+        return None
+    leitura, restricao = PERCEPCAO_PERNAS[valor]
+    return {"pernas": valor, "leitura": leitura, "restricao": restricao}
+
+
 async def prontidao_command(update, context):
     """V21: /prontidao — semáforo do dia, zero GPT.
     V24.8.3: /prontidao ia — auditoria complementar antirrepetição;
     /prontidao ia <treino planejado> — avalia o treino descrito contra a
     prontidão e conclui MANTER/AJUSTAR/CORTAR. "ia" só vale como PRIMEIRO
-    argumento (evita falso positivo em "/prontidao hoje ia treinar")."""
+    argumento (evita falso positivo em "/prontidao hoje ia treinar").
+    V24.8.7: token opcional pernas0-3 em qualquer posição após o comando
+    (percepção muscular subjetiva; veto de texto, não altera o score)."""
     uid = update.effective_user.id
+    # V24.8.7: quer_ia é detectado ANTES de remover qualquer token —
+    # a regra "ia só vale como primeiro argumento" não pode quebrar.
     args = context.args or []
     quer_ia = bool(args) and args[0].lower() == "ia"
-    treino_planejado = " ".join(args[1:]).strip() if quer_ia else ""
+    args_restantes = args[1:] if quer_ia else list(args)
+
+    percepcao_valor = None
+    _sem_token = []
+    for a in args_restantes:
+        m = re.fullmatch(r"pernas([0-3])", a.lower())
+        if m:
+            if percepcao_valor is None:
+                percepcao_valor = int(m.group(1))
+            # tokens repetidos: o primeiro vale, os demais são descartados
+        else:
+            # inclui malformados (pernas4, pernasX): ficam no texto e a
+            # percepção segue não informada — sem erro, sem travar
+            _sem_token.append(a)
+    args_restantes = _sem_token
+    percepcao = ler_percepcao_pernas(percepcao_valor)
+
+    treino_planejado = " ".join(args_restantes).strip() if quer_ia else ""
 
     await context.bot.send_message(
         update.effective_chat.id,
@@ -3790,6 +3871,18 @@ async def prontidao_command(update, context):
         # V23.1: leva a transparência para o estado salvo, então a conversa
         # de decisão ("sigo o plano?") também sabe que houve correção.
         p["cargas_corrigidas"] = _avisos_c
+
+    # V24.8.7: percepção subjetiva — silêncio por padrão. Só quando
+    # informada: linha no texto (camada ADICIONAL ao semáforo objetivo,
+    # nunca substituição) + entra no estado salvo e no payload da IA.
+    if percepcao:
+        texto += (
+            f"\n\nPercepção informada (pernas): {percepcao['pernas']} — "
+            f"{percepcao['leitura']}\n"
+            f"⚠️ {percepcao['restricao']}\n"
+            "(camada adicional ao semáforo objetivo — não altera a pontuação)"
+        )
+        p["percepcao_subjetiva"] = dict(percepcao)
 
     # V22.2: rastro reutilizável — estado estruturado + UMA linha no contexto
     pctx = p.get("contexto") or {}
@@ -3838,6 +3931,8 @@ async def prontidao_command(update, context):
                 "avisos": p.get("avisos"),
                 "dados_ate": p.get("dados_ate"),
                 "cargas_corrigidas": p.get("cargas_corrigidas"),
+                # V24.8.7: percepção do atleta (limpar_vazios remove se ausente)
+                "percepcao_subjetiva": p.get("percepcao_subjetiva"),
             })
             resumo_json = json.dumps(
                 payload_ia, ensure_ascii=False, separators=(",", ":"), default=str
@@ -3872,6 +3967,12 @@ async def prontidao_command(update, context):
                     "tornar o status inconsistente. Nunca compare "
                     "\"ultimo_valor\" com os limites para auditar a "
                     "classificação.\n"
+                    "A percepção subjetiva, quando presente no campo "
+                    "percepcao_subjetiva, foi informada diretamente pelo "
+                    "atleta. Não a recalcule nem a contradiga. Quando indicar "
+                    "pernas travadas, dor ou fadiga muscular incomum, ela "
+                    "prevalece sobre a liberação de intensidade, sem alterar "
+                    "a pontuação objetiva.\n"
                     "Não invente duração, intensidade, volume, séries, zona, "
                     "modalidade, objetivo, sintomas ou disponibilidade do "
                     "atleta. Se a descrição for insuficiente, avalie só o "
@@ -3931,6 +4032,12 @@ async def prontidao_command(update, context):
                     "tornar o status inconsistente. Nunca compare "
                     "\"ultimo_valor\" com os limites para auditar a "
                     "classificação.\n"
+                    "A percepção subjetiva, quando presente no campo "
+                    "percepcao_subjetiva, foi informada diretamente pelo "
+                    "atleta. Não a recalcule nem a contradiga. Quando indicar "
+                    "pernas travadas, dor ou fadiga muscular incomum, ela "
+                    "prevalece sobre a liberação de intensidade, sem alterar "
+                    "a pontuação objetiva.\n"
                     "Exceções materiais válidas incluem: contradição real "
                     "entre a ação determinística e os dados; dados "
                     "desatualizados ou corrigidos que comprometam a "
@@ -4424,6 +4531,8 @@ async def comandos(update, context):
         "/start — iniciar\n"
         "/prontidao — semáforo do dia 🟢🟡🔴 (custo zero)\n"
         "/prontidao ia — semáforo + comentário curto do Sophos\n"
+        "/prontidao pernasN — N de 0 a 3, informa percepção muscular\n"
+        "   (opcional; veta intensidade sem alterar o score)\n"
         "/combustivel <sessão> — estratégia de fueling (custo zero)\n"
         "   ex: /combustivel pedal 3h\n"
         "   ex: /combustivel corrida 90min forte\n"
