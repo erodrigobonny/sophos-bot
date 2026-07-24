@@ -1,4 +1,27 @@
-# Sophos V24.8.7 – main.py
+# Sophos V24.8.9 – main.py
+# (Nota: não houve V24.8.8; a base desta versão é a V24.8.7. O número de
+#  entrega V24.8.9 foi mantido conforme solicitado, pulando o .8.)
+#
+# Mudanças vs V24.8.7:
+# 45. (V24.8.9) Dois ajustes no painel do /prontidao:
+#     a) Distribuição por TEMPO por modalidade, logo após a distribuição
+#        por carga. classificar_rotacao_tri() acumula dur_min no mesmo
+#        laço da carga, sobre a MESMA janela de 7 dias fechados (hoje
+#        excluído), e retorna distribuicao_tempo {modalidade: {min, pct}}.
+#        O painel reusa formatar_duracao(); ordena por % decrescente e
+#        omite a linha quando não há tempo. Complementa (não substitui) a
+#        distribuição por carga — a divergência entre as duas mostra o
+#        custo de carga por hora de cada modalidade. Tempo NÃO entra em
+#        score, monotonia, strain nem no payload da IA.
+#     b) Hierarquia visual da percepção subjetiva: cabeçalho passa a
+#        "PRONTIDÃO OBJETIVA" (sempre, com ou sem percepção) e o bloco de
+#        percepção com veto (pernas>=2) ganha "DECISÃO OPERACIONAL —
+#        TREINAR LEVE" (pernas 2) ou "CORTAR O TREINO E AVALIAR" (pernas
+#        3) mais a frase de precedência, resolvendo a contradição entre o
+#        rótulo "Treinar normal" e o veto. Pernas 0/1 seguem informativos.
+#        Removida a linha "(camada adicional...)". Score, cortes, ação do
+#        verde (já endossava a precedência desde a V24.8.7), parser,
+#        prompts, payload percepcao_subjetiva e estado salvo intactos.
 #
 # Mudanças vs V24.8.6:
 # 44. (V24.8.7) Dois ajustes:
@@ -2843,8 +2866,13 @@ def classificar_rotacao_tri(treinos, cargas_diarias_janela):
     TRI = ("corrida", "bike", "natacao")
     datas = sorted(cargas_diarias_janela.keys())
 
-    # Carga por modalidade por dia (carga efetiva, mesmos grupos do resto)
+    # Carga por modalidade por dia (carga efetiva, mesmos grupos do resto).
+    # V24.8.9: no MESMO laço, acumula tempo (dur_min) por modalidade sobre
+    # a MESMA janela de dias fechados — hoje continua excluído (não é chave
+    # de cargas_diarias_janela). Tempo não entra em nenhum cálculo; só serve
+    # à linha de distribuição por tempo no painel.
     por_dia = {data: {} for data in datas}
+    tempo_grupo = {}
     for t in treinos or []:
         data = t.get("data")
         if data not in por_dia:
@@ -2856,6 +2884,7 @@ def classificar_rotacao_tri(treinos, cargas_diarias_janela):
                 grupo = dom
                 break
         por_dia[data][grupo] = por_dia[data].get(grupo, 0) + _carga(t)
+        tempo_grupo[grupo] = tempo_grupo.get(grupo, 0) + (t.get("dur_min") or 0)
 
     # Rótulo de cada dia, em ordem calendário
     dias = []
@@ -2885,6 +2914,19 @@ def classificar_rotacao_tri(treinos, cargas_diarias_janela):
             pct = round((c / total_semana) * 100, 1)
             if pct > 0:
                 distribuicao_pct[grupo] = pct
+
+    # V24.8.9: distribuição por TEMPO — % sobre o tempo total da janela.
+    # Mesmos grupos da carga (inclui forca/outros quando houver tempo).
+    # Ordenada por % decrescente. Vazia se não houver tempo registrado.
+    tempo_total = sum(tempo_grupo.values())
+    distribuicao_tempo = {}
+    if tempo_total:
+        for grupo, minutos in sorted(tempo_grupo.items(), key=lambda kv: -kv[1]):
+            if minutos > 0:
+                distribuicao_tempo[grupo] = {
+                    "min": int(round(minutos)),
+                    "pct": round((minutos / tempo_total) * 100, 1),
+                }
 
     # Regra dos 3 dias mais carregados: Misto NÃO conta como modalidade —
     # é excluído da contagem e reportado à parte. Off (carga 0) idem.
@@ -2925,6 +2967,7 @@ def classificar_rotacao_tri(treinos, cargas_diarias_janela):
     return {
         "dias": dias,
         "distribuicao_pct": distribuicao_pct,
+        "distribuicao_tempo": distribuicao_tempo,  # V24.8.9
         "top3": {
             "modalidades_distintas": n_distintas,
             "dominantes": sorted(set(NOMES_DOMINIO[d] for d in dominantes_top3)),
@@ -3251,7 +3294,10 @@ def formatar_cargas_diarias(cargas):
 def formatar_prontidao(p):
     """V21: saída em texto puro do semáforo."""
     linhas = []
-    linhas.append(f"{p['emoji']} PRONTIDÃO DE HOJE — {p['rotulo']} ({p['pontos']} pts)")
+    # V24.8.9: "OBJETIVA" deixa explícito, todo dia, que o semáforo mede a
+    # camada objetiva — resolve a contradição visual quando há veto de
+    # percepção subjetiva ("Treinar normal" no topo vs veto no bloco).
+    linhas.append(f"{p['emoji']} PRONTIDÃO OBJETIVA — {p['rotulo']} ({p['pontos']} pts)")
     linhas.append("")
 
     if p["motivos"]:
@@ -3372,6 +3418,19 @@ def formatar_prontidao(p):
                     "  Distribuição: " + " | ".join(
                         f"{NOMES_DOMINIO.get(g, g).lower()} {round(pct)}%"
                         for g, pct in dist.items()
+                    )
+                )
+
+            # V24.8.9: distribuição por TEMPO logo após a de carga — a
+            # divergência entre as duas mostra o custo de carga por hora de
+            # cada modalidade. Reusa formatar_duracao(); ordem por % decr.
+            dist_tempo = rot.get("distribuicao_tempo") or {}
+            if dist_tempo:
+                linhas.append(
+                    "  Tempo 7d: " + " | ".join(
+                        f"{NOMES_DOMINIO.get(g, g).lower()} "
+                        f"{formatar_duracao(v['min'])} ({round(v['pct'])}%)"
+                        for g, v in dist_tempo.items()
                     )
                 )
 
@@ -3873,15 +3932,26 @@ async def prontidao_command(update, context):
         p["cargas_corrigidas"] = _avisos_c
 
     # V24.8.7: percepção subjetiva — silêncio por padrão. Só quando
-    # informada: linha no texto (camada ADICIONAL ao semáforo objetivo,
-    # nunca substituição) + entra no estado salvo e no payload da IA.
+    # informada: bloco no texto + entra no estado salvo e no payload da IA.
+    # V24.8.9: hierarquia visual — pernas>=2 vira "DECISÃO OPERACIONAL"
+    # explícita (veto real); pernas 0/1 fica informativo. A separação em
+    # relação ao score já é dada por "PRONTIDÃO OBJETIVA" no topo.
     if percepcao:
-        texto += (
-            f"\n\nPercepção informada (pernas): {percepcao['pernas']} — "
-            f"{percepcao['leitura']}\n"
-            f"⚠️ {percepcao['restricao']}\n"
-            "(camada adicional ao semáforo objetivo — não altera a pontuação)"
-        )
+        n_pernas = percepcao["pernas"]
+        if n_pernas >= 2:
+            acao_curta = "TREINAR LEVE" if n_pernas == 2 else "CORTAR O TREINO E AVALIAR"
+            texto += (
+                "\n\nPercepção informada:\n"
+                f"  Pernas {n_pernas}/3 — {percepcao['leitura']}\n"
+                f"⚠️ DECISÃO OPERACIONAL — {acao_curta}\n"
+                "A percepção muscular prevalece sobre os indicadores objetivos hoje."
+            )
+        else:
+            texto += (
+                "\n\nPercepção informada:\n"
+                f"  Pernas {n_pernas}/3 — {percepcao['leitura']}\n"
+                f"  {percepcao['restricao']}"
+            )
         p["percepcao_subjetiva"] = dict(percepcao)
 
     # V22.2: rastro reutilizável — estado estruturado + UMA linha no contexto
