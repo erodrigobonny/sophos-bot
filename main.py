@@ -1,4 +1,31 @@
-# Sophos V24.9.0 – main.py
+# Sophos V25.0 – main.py
+#
+# Mudanças vs V24.9.0:
+# 47. (V25.0) /metricas com filtro por MODALIDADE:
+#     a) modalidade opcional como PRIMEIRO argumento (natação, corrida,
+#        bike, força), reusando os aliases de DOMINIOS_ANALISE (só as
+#        quatro modalidades de treino; acento/caixa normalizados), seguida
+#        de dias ou período — parse_metricas_args() delega o período a
+#        parse_periodo_args(). Modo geral (/metricas 30) INALTERADO.
+#     b) painel técnico por modalidade (formatar_metricas_modalidade):
+#        totais e médias recalculados SÓ sobre os treinos filtrados (os
+#        totais globais de d incluem outras modalidades), sessões em ordem
+#        cronológica crescente, formato estável DATA | NOME | CAMPO valor,
+#        campos ausentes omitidos, carga via _carga() com rótulo
+#        "[corrigida; original X]", aviso de volume acima de 40 sessões,
+#        mensagem clara quando o período não tem sessões. Pensado para
+#        copiar e analisar externamente.
+#     c) natação com painel completo (distância, duração, carga, FC,
+#        pace/100m, cadência, DPS, SWOLF, piscina, comprimentos, int,
+#        TRIMP) + resumo com pace médio PONDERADO (tempo total ÷ distância
+#        total, não média simples) e cobertura X/N por métrica.
+#     d) cálculo por treino de natação EXTRAÍDO para
+#        calcular_metricas_natacao_treino() — refatoração pura; o
+#        resultado de calcular_indicadores()["metricas_natacao"] (usado
+#        por /prontidao, /relatorio e /analise) é idêntico.
+#     e) zero nova chamada à API do Intervals, zero chamada a modelo;
+#        CTL/ATL/TSB/ACWR/rampa/monotonia/strain são globais e NÃO
+#        aparecem nem são recalculados no painel filtrado.
 #
 # Mudanças vs V24.8.9:
 # 46. (V24.9.0) FIX de vazamento de token malformado de percepção. No
@@ -1019,6 +1046,31 @@ def parse_periodo_args(args):
 
     return dias, inicio, fim
 
+
+def parse_metricas_args(args):
+    """V25.0: parser do /metricas com modalidade OPCIONAL como PRIMEIRO
+    argumento (sintaxe deliberadamente fechada — não procura em outras
+    posições). Reusa os aliases de DOMINIOS_ANALISE, considerando só as
+    quatro modalidades de treino (sono/recuperacao/peso não são), e
+    parse_periodo_args() para o restante. Normaliza acento/caixa para
+    "natação"/"força" funcionarem. Retorna (modalidade, dias, inicio, fim);
+    ValueError de período sobe para o chamador."""
+    args = list(args or [])
+    modalidade = None
+
+    if args:
+        alvo = remover_acentos(args[0].lower())
+        for dom in ("corrida", "bike", "natacao", "forca"):
+            if alvo in DOMINIOS_ANALISE[dom]:
+                modalidade = dom
+                break
+        if modalidade:
+            args = args[1:]
+
+    dias, inicio, fim = parse_periodo_args(args)
+    return modalidade, dias, inicio, fim
+
+
 def interpretar_pedido_analise(texto):
     """V19: parser local do /analise. Zero custo de token.
     Extrai (dias, inicio, fim, dominios, modo_alvo) de um pedido livre.
@@ -1466,6 +1518,47 @@ def normalizar_data_br(data_str):
 
     raise ValueError(f"Data inválida: {data_str}")
 
+def calcular_metricas_natacao_treino(t):
+    """V25.0: cálculo por treino de natação, EXTRAÍDO de
+    calcular_indicadores() como refatoração pura — mesmo dict, mesmas
+    chaves, mesmos arredondamentos, mesma lógica de pace nativo vs
+    calculado, DPS e SWOLF. Também alimenta o /metricas por modalidade."""
+    dist_m = (t.get("dist_km") or 0) * 1000
+    dur_min = t.get("dur_min") or 0
+    cad = t.get("cadencia")
+
+    # V24.2: usa pace nativo (average_speed) quando veio; senão calcula
+    # por distância/duração como antes.
+    pace_100m = t.get("pace_100m_nativo")
+    if pace_100m is None:
+        pace_100m = round(dur_min / (dist_m / 100), 2) if dist_m else None
+
+    dps_estimado = None
+    swolf_estimado = None
+
+    if cad and dur_min and dist_m:
+        total_braçadas = cad * dur_min
+        dps_estimado = round(dist_m / total_braçadas, 2) if total_braçadas else None
+
+        comprimentos = t.get("comprimentos")
+        if comprimentos:
+            seg_por_piscina = (dur_min * 60) / comprimentos
+            bracadas_por_piscina = total_braçadas / comprimentos
+            swolf_estimado = round(seg_por_piscina + bracadas_por_piscina, 1)
+
+    return {
+        "data": t.get("data"),
+        "tipo": t.get("tipo"),
+        "dist_m": round(dist_m),
+        "dur_min": dur_min,
+        "pace_100m": formatar_pace(pace_100m),   # V19.1: formato 1:55 min/100m
+        "pace_100m_decimal": pace_100m,          # V19.1: decimal p/ comparação
+        "cadencia": round(cad, 1) if cad else None,
+        "dps_estimado": dps_estimado,
+        "swolf_estimado": swolf_estimado,
+    }
+
+
 def calcular_indicadores(d, baseline=None, excluir_dia=None):
     """V24.7: excluir_dia (ISO date str) remove um dia do cálculo de
     monotonia/strain — usado pelo /prontidao para não contar o dia de HOJE,
@@ -1645,43 +1738,9 @@ def calcular_indicadores(d, baseline=None, excluir_dia=None):
         and (t.get("dur_min") or 0) > 0
     ]
 
-    metricas_natacao = []
-
-    for t in natacoes:
-        dist_m = (t.get("dist_km") or 0) * 1000
-        dur_min = t.get("dur_min") or 0
-        cad = t.get("cadencia")
-
-        # V24.2: usa pace nativo (average_speed) quando veio; senão calcula
-        # por distância/duração como antes.
-        pace_100m = t.get("pace_100m_nativo")
-        if pace_100m is None:
-            pace_100m = round(dur_min / (dist_m / 100), 2) if dist_m else None
-
-        dps_estimado = None
-        swolf_estimado = None
-
-        if cad and dur_min and dist_m:
-            total_braçadas = cad * dur_min
-            dps_estimado = round(dist_m / total_braçadas, 2) if total_braçadas else None
-
-            comprimentos = t.get("comprimentos")
-            if comprimentos:
-                seg_por_piscina = (dur_min * 60) / comprimentos
-                bracadas_por_piscina = total_braçadas / comprimentos
-                swolf_estimado = round(seg_por_piscina + bracadas_por_piscina, 1)
-
-        metricas_natacao.append({
-            "data": t.get("data"),
-            "tipo": t.get("tipo"),
-            "dist_m": round(dist_m),
-            "dur_min": dur_min,
-            "pace_100m": formatar_pace(pace_100m),   # V19.1: formato 1:55 min/100m
-            "pace_100m_decimal": pace_100m,          # V19.1: decimal p/ comparação
-            "cadencia": round(cad, 1) if cad else None,
-            "dps_estimado": dps_estimado,
-            "swolf_estimado": swolf_estimado,
-        })
+    # V25.0: cálculo por treino extraído para calcular_metricas_natacao_treino()
+    # (refatoração pura — resultado idêntico ao bloco inline anterior)
+    metricas_natacao = [calcular_metricas_natacao_treino(t) for t in natacoes]
 
     ftps_treino = [t.get("ftp") for t in treinos if t.get("ftp")]
     ftp_bike_detectado = ftps_treino[-1] if ftps_treino else None
@@ -2483,6 +2542,227 @@ def treino_para_payload(t):
     }
 
     return limpar_vazios(item)
+
+
+EMOJI_MODALIDADE_METRICAS = {
+    "natacao": "🏊", "bike": "🚴", "corrida": "🏃", "forca": "🏋️",
+}
+
+
+def _fmt_milhar(n):
+    """V25.0: 42500 -> '42.500' (separador de milhar pt-BR)."""
+    return f"{int(round(n)):,}".replace(",", ".")
+
+
+def filtrar_treinos_modalidade(treinos, modalidade):
+    """V25.0: filtro local por modalidade sobre d['treinos'], usando os
+    mesmos grupos do resto do código (MAPA_TIPO_DOMINIO). Ordem
+    cronológica crescente. Nenhuma chamada nova à API."""
+    marcadores = MAPA_TIPO_DOMINIO.get(modalidade, [])
+    sel = [
+        t for t in (treinos or [])
+        if any(m in (t.get("tipo") or "").lower() for m in marcadores)
+    ]
+    sel.sort(key=lambda t: t.get("data") or "")
+    return sel
+
+
+def _campo_carga_sessao(t):
+    """V25.0: campo de carga da linha de sessão — usa _carga() (efetiva,
+    com correção de sensor) e o rótulo de correção do /metricas geral.
+    None quando não há carga nenhuma (campo omitido)."""
+    if t.get("carga_efetiva") is None and t.get("carga_treino") is None:
+        return None
+    c = round(_carga(t))
+    if t.get("carga_corrigida"):
+        return f"carga {c} [corrigida; original {round(t.get('carga_treino') or 0)}]"
+    return f"carga {c}"
+
+
+def _campo_fc_sessao(t):
+    fc_med, fc_max = t.get("fc_med"), t.get("fc_max")
+    if fc_med is not None and fc_max is not None:
+        return f"FC {round(fc_med)}/{round(fc_max)}"
+    if fc_med is not None:
+        return f"FC {round(fc_med)}"
+    if fc_max is not None:
+        return f"FC máx {round(fc_max)}"
+    return None
+
+
+def formatar_metricas_modalidade(d, modalidade):
+    """V25.0: painel técnico do /metricas filtrado por modalidade.
+    Determinístico, sem chamada a modelo. Totais recalculados SÓ sobre os
+    treinos da modalidade (os totais globais de d incluem as demais).
+    CTL/ATL/TSB/ACWR/rampa/monotonia/strain NÃO aparecem (são globais) e
+    não são recalculados. Campos ausentes são omitidos — nunca 'None'."""
+    periodo = d.get("periodo")
+    nome_mod = NOMES_DOMINIO.get(modalidade, modalidade)
+    sessoes = filtrar_treinos_modalidade(d.get("treinos", []), modalidade)
+
+    if not sessoes:
+        return (
+            f"Nenhum treino de {nome_mod.lower()} encontrado no período "
+            f"{periodo}."
+        )
+
+    n = len(sessoes)
+    linhas = [
+        f"{EMOJI_MODALIDADE_METRICAS.get(modalidade, '📌')} MÉTRICAS DE "
+        f"{nome_mod.upper()}",
+        f"Período: {periodo}",
+        f"Sessões: {n}",
+    ]
+    if n > 40:
+        linhas.append(
+            "(saída longa — será dividida em várias mensagens; para copiar "
+            "de uma vez, considere reduzir o período)"
+        )
+    linhas.append("")
+
+    # ---- Resumo (só sobre os treinos filtrados) ----
+    dist_km_total = sum(t.get("dist_km") or 0 for t in sessoes)
+    dur_total = sum(t.get("dur_min") or 0 for t in sessoes)
+    carga_total = sum(_carga(t) for t in sessoes)
+
+    linhas.append("Resumo:")
+    if modalidade == "natacao":
+        dist_m_total = dist_km_total * 1000
+        if dist_m_total:
+            linhas.append(f"  Distância total: {_fmt_milhar(dist_m_total)} m")
+    elif modalidade != "forca" and dist_km_total:
+        linhas.append(f"  Distância total: {round(dist_km_total, 1)} km")
+    if dur_total:
+        linhas.append(f"  Tempo total: {formatar_duracao(dur_total)}")
+    linhas.append(f"  Carga total: {round(carga_total)}")
+
+    media_partes = []
+    if modalidade == "natacao" and dist_km_total:
+        media_partes.append(f"{_fmt_milhar(dist_km_total * 1000 / n)} m")
+    elif modalidade != "forca" and dist_km_total:
+        media_partes.append(f"{round(dist_km_total / n, 1)} km")
+    if dur_total:
+        media_partes.append(formatar_duracao(dur_total / n))
+    media_partes.append(f"carga {round(carga_total / n, 1)}")
+    linhas.append("  Média por sessão: " + " | ".join(media_partes))
+
+    if modalidade == "natacao":
+        mets = [calcular_metricas_natacao_treino(t) for t in sessoes]
+        # Pace médio PONDERADO: tempo total ÷ distância total (não média
+        # simples dos paces), só sobre sessões com os dois dados.
+        com_pace = [m for m in mets if m["dist_m"] and m["dur_min"]]
+        dist_p = sum(m["dist_m"] for m in com_pace)
+        dur_p = sum(m["dur_min"] for m in com_pace)
+        pace_pond = formatar_pace(dur_p / (dist_p / 100)) if dist_p else None
+
+        cads = [m["cadencia"] for m in mets if m["cadencia"] is not None]
+        dpss = [m["dps_estimado"] for m in mets if m["dps_estimado"] is not None]
+        swolfs = [m["swolf_estimado"] for m in mets if m["swolf_estimado"] is not None]
+
+        resumo_tec = []
+        if pace_pond:
+            resumo_tec.append(f"Pace médio: {pace_pond}/100m")
+        if cads:
+            resumo_tec.append(f"cadência {round(sum(cads) / len(cads), 1)}")
+        if dpss:
+            resumo_tec.append(f"DPS {round(sum(dpss) / len(dpss), 2)}")
+        if swolfs:
+            resumo_tec.append(f"SWOLF {round(sum(swolfs) / len(swolfs), 1)}")
+        if resumo_tec:
+            linhas.append("  " + " | ".join(resumo_tec))
+        linhas.append(
+            f"  Cobertura: pace {len(com_pace)}/{n} | cadência {len(cads)}/{n} "
+            f"| DPS {len(dpss)}/{n} | SWOLF {len(swolfs)}/{n}"
+        )
+
+    linhas.append("")
+    linhas.append("Dados por sessão (cronológico):")
+
+    for t in sessoes:
+        partes = [t.get("data") or "-", t.get("nome") or t.get("tipo") or "-"]
+
+        if modalidade == "natacao":
+            m = calcular_metricas_natacao_treino(t)
+            if m["dist_m"]:
+                partes.append(f"{m['dist_m']} m")
+            if m["dur_min"]:
+                partes.append(formatar_duracao(m["dur_min"]))
+            c = _campo_carga_sessao(t)
+            if c:
+                partes.append(c)
+            fc = _campo_fc_sessao(t)
+            if fc:
+                partes.append(fc)
+            if m["pace_100m"]:
+                partes.append(f"pace {m['pace_100m']}/100m")
+            if m["cadencia"] is not None:
+                partes.append(f"cad {round(m['cadencia'])}")
+            if m["dps_estimado"] is not None:
+                partes.append(f"DPS {m['dps_estimado']}")
+            if m["swolf_estimado"] is not None:
+                partes.append(f"SWOLF {round(m['swolf_estimado'])}")
+            if t.get("comprimento_piscina"):
+                partes.append(f"piscina {round(t['comprimento_piscina'])}m")
+            if t.get("comprimentos"):
+                partes.append(f"{t['comprimentos']} compr.")
+            if t.get("intensidade") is not None:
+                partes.append(f"int {round(t['intensidade'])}")
+            if t.get("trimp") is not None:
+                partes.append(f"TRIMP {round(t['trimp'], 1)}")
+
+        elif modalidade in ("corrida", "bike"):
+            if t.get("dist_km"):
+                partes.append(f"{t['dist_km']} km")
+            if t.get("dur_min"):
+                partes.append(formatar_duracao(t["dur_min"]))
+            c = _campo_carga_sessao(t)
+            if c:
+                partes.append(c)
+            fc = _campo_fc_sessao(t)
+            if fc:
+                partes.append(fc)
+            if modalidade == "corrida":
+                if t.get("pace_min_km") is not None:
+                    partes.append(f"pace {formatar_pace(t['pace_min_km'])}/km")
+                if t.get("cadencia") is not None:
+                    partes.append(f"cad {round(t['cadencia'])}")
+                if t.get("stride_m") is not None:
+                    partes.append(f"passada {t['stride_m']}m")
+            else:
+                if t.get("potencia_w") is not None:
+                    partes.append(f"pot {round(t['potencia_w'])}W")
+                if t.get("cadencia") is not None:
+                    partes.append(f"cad {round(t['cadencia'])}")
+            if t.get("elev_m"):
+                partes.append(f"elev {round(t['elev_m'])}m")
+            if t.get("intensidade") is not None:
+                partes.append(f"int {round(t['intensidade'])}")
+            if t.get("trimp") is not None:
+                partes.append(f"TRIMP {round(t['trimp'], 1)}")
+            if modalidade == "bike" and t.get("ftp") is not None:
+                partes.append(f"FTP {round(t['ftp'])}W")
+            if t.get("eficiencia") is not None:
+                partes.append(f"EF {t['eficiencia']}")
+            if t.get("decoupling") is not None:
+                partes.append(f"dec {round(t['decoupling'], 1)}%")
+
+        else:  # forca
+            if t.get("dur_min"):
+                partes.append(formatar_duracao(t["dur_min"]))
+            c = _campo_carga_sessao(t)
+            if c:
+                partes.append(c)
+            fc = _campo_fc_sessao(t)
+            if fc:
+                partes.append(fc)
+            if t.get("intensidade") is not None:
+                partes.append(f"int {round(t['intensidade'])}")
+            if t.get("trimp") is not None:
+                partes.append(f"TRIMP {round(t['trimp'], 1)}")
+
+        linhas.append("  " + " | ".join(str(p) for p in partes))
+
+    return "\n".join(linhas)
 
 
 def preparar_dados_relatorio(d):
@@ -4484,12 +4764,15 @@ async def comparar_command(update, context):
     )
 
 async def metricas_command(update, context):
+    # V25.0: modalidade opcional como primeiro argumento; sem ela o
+    # comportamento é idêntico ao anterior (mesma coleta, mesmo painel).
     try:
-        dias, inicio, fim = parse_periodo_args(context.args)
+        modalidade, dias, inicio, fim = parse_metricas_args(context.args)
     except ValueError:
         await context.bot.send_message(
             update.effective_chat.id,
             "Formato inválido. Use:\n/metricas 7\nou\n/metricas 25/05/26 31/05/26"
+            "\nou\n/metricas natacao 90"
         )
         return
 
@@ -4511,7 +4794,10 @@ async def metricas_command(update, context):
         )
         return
 
-    texto = formatar_metricas(d)
+    if modalidade:
+        texto = formatar_metricas_modalidade(d, modalidade)
+    else:
+        texto = formatar_metricas(d)
 
     await enviar_texto_longo(
         context,
@@ -4628,6 +4914,9 @@ async def comandos(update, context):
         "   ex: /analise corrida e natação último mês\n"
         "/comparar <dias> — período atual vs anterior\n"
         "/metricas <dias ou período> — métricas brutas, sem análise\n"
+        "/metricas <modalidade> <dias ou período> — métricas técnicas filtradas\n"
+        "   ex: /metricas natacao 90\n"
+        "   ex: /metricas bike 01/01/26 31/03/26\n"
         "/processar_arquivo <instrução> — processar último arquivo pendente\n"
         "/custos — uso e custo estimado do mês\n"
         "/comandos — mostrar menu"
