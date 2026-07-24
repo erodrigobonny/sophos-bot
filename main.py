@@ -1,8 +1,19 @@
-# Sophos V24.8.9 – main.py
-# (Nota: não houve V24.8.8; a base desta versão é a V24.8.7. O número de
-#  entrega V24.8.9 foi mantido conforme solicitado, pulando o .8.)
+# Sophos V24.9.0 – main.py
 #
-# Mudanças vs V24.8.7:
+# Mudanças vs V24.8.9:
+# 46. (V24.9.0) FIX de vazamento de token malformado de percepção. No
+#     parser de pernasN em prontidao_command(), tokens inválidos
+#     (pernas4, pernas9, pernas42, pernasX) caíam no ramo "else" e iam
+#     para _sem_token -> args_restantes -> treino_planejado quando "ia"
+#     estava presente. Ex: "/prontidao ia pernas9 corrida 8x400 forte"
+#     mandava treino_planejado = "pernas9 corrida 8x400 forte" ao modelo,
+#     poluindo o payload e contradizendo o changelog da V24.8.7 (que
+#     afirmava tokens malformados "ignorados"). Agora qualquer "pernas" +
+#     dígitos (inclusive múltiplos) ou "x" é descartado de fato. Este fix
+#     foi especificado como V24.8.8 mas não aplicado à época (a V24.8.9
+#     partiu da V24.8.7); agora rebaseado sobre a V24.8.9. Nada mais muda.
+#
+# Mudanças vs V24.8.7 (V24.8.9 — base V24.8.7, sem V24.8.8):
 # 45. (V24.8.9) Dois ajustes no painel do /prontidao:
 #     a) Distribuição por TEMPO por modalidade, logo após a distribuição
 #        por carga. classificar_rotacao_tri() acumula dur_min no mesmo
@@ -3886,15 +3897,19 @@ async def prontidao_command(update, context):
     percepcao_valor = None
     _sem_token = []
     for a in args_restantes:
-        m = re.fullmatch(r"pernas([0-3])", a.lower())
+        token = a.lower()
+        m = re.fullmatch(r"pernas([0-3])", token)
         if m:
             if percepcao_valor is None:
                 percepcao_valor = int(m.group(1))
-            # tokens repetidos: o primeiro vale, os demais são descartados
-        else:
-            # inclui malformados (pernas4, pernasX): ficam no texto e a
-            # percepção segue não informada — sem erro, sem travar
-            _sem_token.append(a)
+            # tokens válidos repetidos: o primeiro vale, os demais descartados
+            continue
+        # V24.9.0: token malformado (pernas4, pernas9, pernas42, pernasX) é
+        # DESCARTADO de fato — antes vazava para _sem_token e, com "ia", ia
+        # parar em treino_planejado, poluindo o payload enviado ao modelo.
+        if re.fullmatch(r"pernas(?:\d+|x)", token):
+            continue
+        _sem_token.append(a)
     args_restantes = _sem_token
     percepcao = ler_percepcao_pernas(percepcao_valor)
 
