@@ -4867,8 +4867,8 @@ async def custos_command(update, context):
         "gpt-5.5": {"input": 5.0, "output": 30.00},
         # V24.7.2: família GPT-5.6 (lançada 09/07/26)
         "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
-        "gpt-5.6-terra": {"input": 2.50, "output": 15.00},
-        "gpt-5.6-luna": {"input": 1.00, "output": 6.00},
+        "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
+        "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
     }
 
     custo_total = 0.0
