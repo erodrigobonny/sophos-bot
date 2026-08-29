@@ -1,4 +1,26 @@
-# Sophos V25.0 – main.py
+# Sophos V25.1 – main.py
+#
+# Mudanças vs V25.0:
+# 48. (V25.1) SLEEP SCORE (sleepScore do Intervals) vira métrica de
+#     primeira classe — ADIÇÃO, sem tocar na semântica de sono_h/
+#     sono_medio_h/tendencia_sono_h. Motivo: HRV e duração não capturam
+#     sono profundo/REM; o score captura. Onde entrou:
+#     - baseline: "sono_score" via status_baseline (janela 28d, mesma do
+#       sono; <14 registros degrada para "sem baseline suficiente");
+#     - wellness_diario ("sono_score") e resumo_semanal (média semanal);
+#     - /metricas 3.1 (linha "Sleep score" no status wellness) e painel
+#       Wellness do /prontidao (linha_wellness_prontidao);
+#     - payloads ao modelo: junto de sono_h/sono_medio_h (contexto do
+#       /analise dia-alvo, domínio recuperacao; domínio sono já tinha) e
+#       automaticamente via baseline/wellness_diario/resumo_semanal;
+#     - PROMPT_RELATORIO: sleep score na lista de correlações, com nota
+#       explícita de que score e duração NÃO são independentes (o score
+#       embute a duração) — concordância não é dupla evidência; divergência
+#       (dormiu muito com score baixo) é o achado interessante.
+#     SCORING: sem item novo de +2 — sono_h e sono_score dividem o BLOCO
+#     de sono em frações iguais com teto de 2.0 (padrão monotonia/strain);
+#     com só um baseline válido, ele carrega o peso 2 sozinho. Comporta-
+#     mento idêntico ao anterior quando sleepScore não existe.
 #
 # Mudanças vs V24.9.0:
 # 47. (V25.0) /metricas com filtro por MODALIDADE:
@@ -650,9 +672,13 @@ Monotonia/strain altos = risco de fadiga acumulada
 MÉTRICAS A CORRELACIONAR (use todas disponíveis):
 CTL, ATL, TSB, ACWR, rampa (ramp_rate), monotonia, strain, carga_por_dia, carga_por_sessao, densidade_treino,
 dias_ativos_pct, distribuição de carga, maior_treino_carga/duracao/distancia,
-HRV/tendência HRV, RHR/tendência RHR, sono/tendência sono, readiness, body battery,
+HRV/tendência HRV, RHR/tendência RHR, sono/tendência sono, sleep score, readiness, body battery,
 stress, VO2max, FTP/eFTP, razão carga corrida/bike, percentual sessões alta intensidade,
 potência, cadência, TRIMP, pace_100m, DPS e SWOLF de natação.
+Sleep score e duração de sono NÃO são independentes — o score embute a duração
+(além de sono profundo/REM); não trate concordância entre os dois como duas
+evidências separadas, e destaque quando divergirem (dormiu bastante com score
+baixo = sono longo de má qualidade).
 
 ESTRUTURA:
 📊 RESUMO DO PERÍODO
@@ -1929,16 +1955,20 @@ def coletar_baseline_wellness(base, auth, fim, janela_dias=67):
         baseline = {
             "janela": f"{base_old.isoformat()} a {fim.isoformat()}",
             "metodo": (
-                "media 7d vs baseline (HRV/RHR 60d, sono 28d), "
+                "media 7d vs baseline (HRV/RHR 60d, sono e sleep score 28d), "
                 "faixa de +/-1 desvio padrao"
             ),
             "hrv": status_baseline(serie("hrv"), fim, janela_base=60),
             "rhr": status_baseline(serie("restingHR"), fim, janela_base=60),
             "sono_h": status_baseline(serie("sleepSecs", lambda s: s / 3600), fim),
+            # V25.1: sleep score (sono profundo/REM que duração e HRV não
+            # capturam) — mesma janela de 28d do sono. Com <14 registros,
+            # status_baseline devolve None e o painel degrada sozinho.
+            "sono_score": status_baseline(serie("sleepScore"), fim),
         }
 
         # Se nenhuma métrica gerou status, baseline é inútil
-        if not any(baseline.get(k) for k in ("hrv", "rhr", "sono_h")):
+        if not any(baseline.get(k) for k in ("hrv", "rhr", "sono_h", "sono_score")):
             return None
 
         return baseline
@@ -2186,6 +2216,7 @@ def coletar_intervals(dias=7, inicio=None, fim=None, excluir_dia_calculo=None):
             "hrv": w.get("hrv"),
             "rhr": w.get("restingHR"),
             "sono_h": round(w.get("sleepSecs") / 3600, 1) if w.get("sleepSecs") else None,
+            "sono_score": w.get("sleepScore"),  # V25.1
             "stress": w.get("avgStress"),
             "body_battery": w.get("bodyBattery"),
             "ramp": w.get("rampRate"),
@@ -2372,7 +2403,7 @@ def formatar_baseline(bl):
             texto += f" | até {st['ultimo_dia']}"
         return texto
 
-    for nome, chave, suf in [("HRV", "hrv", ""), ("RHR", "rhr", " bpm"), ("Sono", "sono_h", " h")]:
+    for nome, chave, suf in [("HRV", "hrv", ""), ("RHR", "rhr", " bpm"), ("Sono", "sono_h", " h"), ("Sleep score", "sono_score", "")]:
         l = linha(nome, bl.get(chave), suf)
         if l:
             linhas.append(l)
@@ -2806,7 +2837,7 @@ def _semana_vazia():
     return {
         "sessoes": 0, "carga": 0, "dur_min": 0,
         "corrida_km": 0, "bike_km": 0, "natacao_m": 0, "forca_sessoes": 0,
-        "_hrv": [], "_rhr": [], "_sono": [], "_stress": [], "_ramp": [],
+        "_hrv": [], "_rhr": [], "_sono": [], "_sono_score": [], "_stress": [], "_ramp": [],
     }
 
 
@@ -2859,6 +2890,8 @@ def agregar_semanal(d):
             s["_rhr"].append(w["rhr"])
         if w.get("sono_h") is not None:
             s["_sono"].append(w["sono_h"])
+        if w.get("sono_score") is not None:
+            s["_sono_score"].append(w["sono_score"])  # V25.1
         if w.get("stress") is not None:
             s["_stress"].append(w["stress"])
         if w.get("ramp") is not None:
@@ -2890,6 +2923,7 @@ def agregar_semanal(d):
             "hrv": media_lista(s["_hrv"]),
             "rhr": media_lista(s["_rhr"]),
             "sono_h": media_lista(s["_sono"]),
+            "sono_score": media_lista(s["_sono_score"]),  # V25.1
             "stress": media_lista(s["_stress"]),
             "rampa": media_lista(s["_ramp"]),
         }))
@@ -3033,6 +3067,7 @@ def montar_payload_alvo_com_contexto(d_alvo, d_ctx, dominios):
                 "hrv_medio": rec.get("hrv_medio"),
                 "rhr_medio": rec.get("rhr_medio"),
                 "sono_medio_h": rec.get("sono_medio_h"),
+                "sono_score_medio": rec.get("sono_score_medio"),  # V25.1
             },
             "ultimas_sessoes_mesmo_dominio": ultimas_sessoes,
         },
@@ -3124,6 +3159,7 @@ def filtrar_dados_para_analise(d, dominios):
             "tendencia_rhr": rec.get("tendencia_rhr"),
             "tendencia_sono_h": rec.get("tendencia_sono_h"),
             "sono_medio_h": rec.get("sono_medio_h"),
+            "sono_score_medio": rec.get("sono_score_medio"),  # V25.1
             "alerta": alerta,
         }
         payload["cargas_diarias"] = cargas_diarias(treinos)
@@ -3313,13 +3349,33 @@ def calcular_prontidao(d):
         pontos += 1
         motivos.append("RHR elevado (corte genérico, sem baseline)")
 
-    # --- Sono ---
-    st = sono_st.get("status")
-    if st in ("baixo", "desequilibrado"):
-        pontos += 2
-        motivos.append(f"sono {abs(sono_st.get('variacao_pct') or 0)}% abaixo do baseline")
-    elif st in ("equilibrado", "alto"):
-        positivos.append("sono em dia")
+    # --- Sono (V25.1: bloco duração + sleep score, CAPADO em 2.0) ---
+    # Razão do cap (mesmo padrão do combo monotonia/strain): sono_h e
+    # sono_score NÃO são independentes — o score embute a duração e soma
+    # profundo/REM. Um item de +2 para cada duplicaria a penalização do
+    # mesmo fenômeno. Cada métrica com baseline válido responde por uma
+    # fração igual do bloco; com só uma disponível, ela carrega sozinha o
+    # peso atual (2). O teto do bloco inteiro segue 2.0.
+    sono_score_st = bl.get("sono_score") or {}
+    _sono_validos = [s for s in (sono_st, sono_score_st) if s.get("status")]
+    if _sono_validos:
+        _peso_sono = 2.0 / len(_sono_validos)
+        _pontos_sono = 0.0
+        st = sono_st.get("status")
+        if st in ("baixo", "desequilibrado"):
+            _pontos_sono += _peso_sono
+            motivos.append(f"sono {abs(sono_st.get('variacao_pct') or 0)}% abaixo do baseline")
+        elif st in ("equilibrado", "alto"):
+            positivos.append("sono em dia")
+        st = sono_score_st.get("status")
+        if st in ("baixo", "desequilibrado"):
+            _pontos_sono += _peso_sono
+            motivos.append(
+                f"sleep score {abs(sono_score_st.get('variacao_pct') or 0)}% abaixo do baseline"
+            )
+        elif st in ("equilibrado", "alto"):
+            positivos.append("sleep score em dia")
+        pontos += min(_pontos_sono, 2.0)
     elif rec.get("sono_medio_h") is not None and rec["sono_medio_h"] < 6.0:
         pontos += 2
         motivos.append("sono curto (corte genérico, sem baseline)")
@@ -3544,6 +3600,7 @@ def calcular_prontidao(d):
                 "hrv": hrv_st,
                 "rhr": rhr_st,
                 "sono_h": sono_st,
+                "sono_score": sono_score_st,  # V25.1
             },
         }),
     }
@@ -3828,12 +3885,13 @@ def formatar_prontidao(p):
 
         # V24.6: wellness numérico (valor de hoje vs média/faixa/baseline)
         well = ctx.get("wellness") or {}
-        if any(well.get(k) for k in ("hrv", "rhr", "sono_h")):
+        if any(well.get(k) for k in ("hrv", "rhr", "sono_h", "sono_score")):
             linhas.append("")
             linhas.append("Wellness:")
             linhas.append(linha_wellness_prontidao("HRV", well.get("hrv")))
             linhas.append(linha_wellness_prontidao("RHR", well.get("rhr"), " bpm"))
             linhas.append(linha_wellness_prontidao("Sono", well.get("sono_h"), " h"))
+            linhas.append(linha_wellness_prontidao("Sleep score", well.get("sono_score")))
 
     # V21.1: transparência sobre frescura do dado
     if p.get("avisos"):
