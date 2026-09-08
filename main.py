@@ -1,4 +1,35 @@
-# Sophos V25.1 – main.py
+# Sophos V25.2 – main.py
+#
+# Mudanças vs V25.1:
+# 49. (V25.2) DISTRIBUIÇÃO DE INTENSIDADE por zona de FC — eixo NOVO,
+#     separado do eixo de MODALIDADE (distribuicao_carga_pct). Os dois
+#     nunca se misturam: dados, chaves e linhas de texto distintos.
+#     - distribuicao_zonas_fc(treinos): lê zona_fc_tempos
+#       (icu_hr_zone_times, segundos por zona Z1..Z7 em ordem crescente)
+#       e agrupa Z1+2 (índices 0-1), Z3+4 (2-3), Z5+ (4 em diante — não
+#       depende do número exato de zonas configuradas).
+#     - DENOMINADOR: só os segundos de treinos QUE TÊM dado de zona,
+#       nunca o tempo total do período. Treino sem FC (força, indoor sem
+#       sensor, natação sem monitor) é ausência normal, sai da conta e
+#       não entra como zero — mesmo princípio do denominador do
+#       /metricas por modalidade.
+#     - COBERTURA: conta treinos com dado vs total. Abaixo de 50% o texto
+#       vira "dado de zona insuficiente no período (X de Y treinos)" em
+#       vez de exibir % como retrato do período; com 0 treinos com dado a
+#       linha some inteira, sem aviso de erro.
+#     - Onde entra: painel do /prontidao (7 dias FECHADOS, mesma janela
+#       da rotação tri) e /metricas (resumo geral, período pedido);
+#       payload estruturado do /relatorio e /comparar (via indicadores) e
+#       do /analise (via contexto_carga).
+#     - NÃO entra no prompt do /prontidao ia: fica no topo do retorno de
+#       calcular_prontidao ("zonas_fc"), fora de "contexto", que é o que
+#       vai ao modelo. É display — não afeta pontos/nivel/rotulo/acao.
+#     - Cautela nos 5 prompts: zona de FC é menos confiável em natação e
+#       força do que em corrida/bike (sem monitor, drift cardíaco, FC
+#       atenuada na água); não tratar como dado uniforme entre
+#       modalidades e considerar a cobertura antes de concluir.
+#     - Sem "Base" e sem índice de polarização: sem fórmula verificada,
+#       não replicado (decisão explícita).
 #
 # Mudanças vs V25.0:
 # 48. (V25.1) SLEEP SCORE (sleepScore do Intervals) vira métrica de
@@ -647,6 +678,12 @@ REGRAS:
   métrica; janela_base_dias informa quantos registros foram usados (HRV/RHR
   podem usar até 60 registros; sono usa até 28). Interprete: HRV
   baixo/desequilibrado e RHR alto = recuperação comprometida. Cite a variacao_pct.
+- Se houver "distribuicao_zonas_fc", ela é o eixo de INTENSIDADE (% do tempo
+  em Z1+2 / Z3+4 / Z5+ sobre o tempo COM dado de zona) e NÃO se confunde com a
+  distribuição de carga por modalidade. Zona de FC é menos confiável em natação
+  e força do que em corrida e bike (ausência de monitor, drift cardíaco, FC
+  atenuada na água): não trate o dado como uniforme entre modalidades, e leve em
+  conta a cobertura (treinos_com_dado vs treinos_periodo) antes de concluir.
 - Monotonia e strain são calculados sobre a carga diária agregada de todas
   as modalidades. Em triatlo, monotonia alta não prova repetição da mesma
   modalidade, do mesmo tecido ou de impacto, nem prova fadiga fisiológica
@@ -721,6 +758,12 @@ REGRAS:
   métrica; janela_base_dias informa quantos registros foram usados (HRV/RHR
   podem usar até 60 registros; sono usa até 28). HRV baixo/desequilibrado e
   RHR alto = recuperação comprometida.
+- Se houver "distribuicao_zonas_fc", ela é o eixo de INTENSIDADE (% do tempo
+  em Z1+2 / Z3+4 / Z5+ sobre o tempo COM dado de zona) e NÃO se confunde com a
+  distribuição de carga por modalidade. Zona de FC é menos confiável em natação
+  e força do que em corrida e bike (ausência de monitor, drift cardíaco, FC
+  atenuada na água): não trate o dado como uniforme entre modalidades, e leve em
+  conta a cobertura (treinos_com_dado vs treinos_periodo) antes de concluir.
 - Monotonia e strain são calculados sobre a carga diária agregada de todas
   as modalidades. Em triatlo, monotonia alta não prova repetição da mesma
   modalidade, do mesmo tecido ou de impacto, nem prova fadiga fisiológica
@@ -774,6 +817,12 @@ REGRAS:
   RHR alto = recuperação comprometida. Cite a variacao_pct.
 - Se houver "cargas_diarias", correlacione com as métricas pedidas
   (ex: sono ruim após dias de carga alta).
+- Se houver "distribuicao_zonas_fc", ela é o eixo de INTENSIDADE (% do tempo
+  em Z1+2 / Z3+4 / Z5+ sobre o tempo COM dado de zona) e NÃO se confunde com a
+  distribuição de carga por modalidade. Zona de FC é menos confiável em natação
+  e força do que em corrida e bike (ausência de monitor, drift cardíaco, FC
+  atenuada na água): não trate o dado como uniforme entre modalidades, e leve em
+  conta a cobertura (treinos_com_dado vs treinos_periodo) antes de concluir.
 - Monotonia e strain são calculados sobre a carga diária agregada de todas
   as modalidades. Em triatlo, monotonia alta não prova repetição da mesma
   modalidade, do mesmo tecido ou de impacto, nem prova fadiga fisiológica
@@ -810,6 +859,12 @@ REGRAS GERAIS:
 - Texto puro. Sem Markdown (**, --, ##). Máximo 3000 caracteres.
 - Use indicadores já calculados. Não recalcule. Não invente dado ausente.
 - Não faça diagnóstico médico; use "maior risco de recuperação comprometida".
+- Se houver "distribuicao_zonas_fc", ela é o eixo de INTENSIDADE (% do tempo
+  em Z1+2 / Z3+4 / Z5+ sobre o tempo COM dado de zona) e NÃO se confunde com a
+  distribuição de carga por modalidade. Zona de FC é menos confiável em natação
+  e força do que em corrida e bike (ausência de monitor, drift cardíaco, FC
+  atenuada na água): não trate o dado como uniforme entre modalidades, e leve em
+  conta a cobertura (treinos_com_dado vs treinos_periodo) antes de concluir.
 - Monotonia e strain são calculados sobre a carga diária agregada de todas
   as modalidades. Em triatlo, monotonia alta não prova repetição da mesma
   modalidade, do mesmo tecido ou de impacto, nem prova fadiga fisiológica
@@ -835,6 +890,12 @@ REGRAS:
 - Use os indicadores já calculados. Não recalcule. Não invente dado ausente.
 - Não faça diagnóstico médico.
 - Cite variações em números (absolutos ou percentuais).
+- Se houver "distribuicao_zonas_fc", ela é o eixo de INTENSIDADE (% do tempo
+  em Z1+2 / Z3+4 / Z5+ sobre o tempo COM dado de zona) e NÃO se confunde com a
+  distribuição de carga por modalidade. Zona de FC é menos confiável em natação
+  e força do que em corrida e bike (ausência de monitor, drift cardíaco, FC
+  atenuada na água): não trate o dado como uniforme entre modalidades, e leve em
+  conta a cobertura (treinos_com_dado vs treinos_periodo) antes de concluir.
 - Monotonia e strain são calculados sobre a carga diária agregada de todas
   as modalidades. Em triatlo, monotonia alta não prova repetição da mesma
   modalidade, do mesmo tecido ou de impacto, nem prova fadiga fisiológica
@@ -1172,6 +1233,89 @@ def _carga(t):
     senão a bruta do Intervals."""
     ce = t.get("carga_efetiva")
     return (ce if ce is not None else t.get("carga_treino")) or 0
+
+
+def distribuicao_zonas_fc(treinos):
+    """V25.2: distribuição de INTENSIDADE por zona de FC — eixo NOVO e
+    SEPARADO da distribuicao_carga_pct, que é por MODALIDADE (bike/
+    corrida/natação/força). Não misturar os dois.
+
+    Lê zona_fc_tempos (icu_hr_zone_times): segundos por zona, Z1..Z7 em
+    ordem crescente de intensidade. Agrupa em Z1+2 (índices 0-1),
+    Z3+4 (2-3) e Z5+ (4 em diante, para não depender do número exato
+    de zonas configuradas).
+
+    DENOMINADOR: só os segundos de treinos QUE TÊM dado de zona — nunca
+    o tempo total do período. Treino sem FC (força, indoor sem sensor,
+    natação sem monitor) é ausência normal e sai da conta, não entra
+    como zero (mesmo princípio do denominador do /metricas por
+    modalidade).
+
+    Retorna None quando nenhum treino tem dado (chamador omite a linha,
+    sem aviso de erro). Com dado, devolve os % mais a cobertura, para o
+    texto poder ressalvar amostra fraca."""
+    total_treinos = len(treinos or [])
+    seg = {"z1_2": 0.0, "z3_4": 0.0, "z5_mais": 0.0}
+    com_dado = 0
+
+    for t in treinos or []:
+        tempos = t.get("zona_fc_tempos")
+        if not tempos:
+            continue
+        try:
+            vals = [float(x or 0) for x in tempos]
+        except (TypeError, ValueError):
+            continue
+        if sum(vals) <= 0:
+            continue
+        com_dado += 1
+        seg["z1_2"] += sum(vals[0:2])
+        seg["z3_4"] += sum(vals[2:4])
+        seg["z5_mais"] += sum(vals[4:])
+
+    if not com_dado:
+        return None
+
+    total_seg = seg["z1_2"] + seg["z3_4"] + seg["z5_mais"]
+    if total_seg <= 0:
+        return None
+
+    cobertura_pct = round((com_dado / total_treinos) * 100, 1) if total_treinos else 0.0
+
+    return {
+        "z1_2_pct": round((seg["z1_2"] / total_seg) * 100, 1),
+        "z3_4_pct": round((seg["z3_4"] / total_seg) * 100, 1),
+        "z5_mais_pct": round((seg["z5_mais"] / total_seg) * 100, 1),
+        "minutos_com_dado": round(total_seg / 60),
+        "treinos_com_dado": com_dado,
+        "treinos_periodo": total_treinos,
+        "cobertura_pct": cobertura_pct,
+        # <50% dos treinos com FC: amostra fraca demais para apresentar
+        # o percentual como se fosse o retrato do período inteiro.
+        "cobertura_suficiente": cobertura_pct >= 50,
+    }
+
+
+def linha_zonas_fc(dist, prefixo="  "):
+    """V25.2: linha de texto da distribuição de intensidade. Devolve None
+    quando não há dado nenhum (a linha some do painel, sem erro)."""
+    if not dist:
+        return None
+
+    if not dist.get("cobertura_suficiente"):
+        return (
+            f"{prefixo}Distribuição de intensidade: dado de zona insuficiente "
+            f"no período ({dist.get('treinos_com_dado')} de "
+            f"{dist.get('treinos_periodo')} treinos)"
+        )
+
+    return (
+        f"{prefixo}Distribuição de intensidade: "
+        f"Z1+2 {round(dist['z1_2_pct'])}% | "
+        f"Z3+4 {round(dist['z3_4_pct'])}% | "
+        f"Z5+ {round(dist['z5_mais_pct'])}% "
+        f"({dist.get('treinos_com_dado')}/{dist.get('treinos_periodo')} treinos com FC)"
+    )
 
 
 def carga_efetiva_treino(t):
@@ -1821,6 +1965,9 @@ def calcular_indicadores(d, baseline=None, excluir_dia=None):
         "dias_off": max(dias - dias_ativos, 0),
         "dias_ativos_pct": round((dias_ativos / dias) * 100, 1) if dias else 0,
         "distribuicao_carga_pct": distribuicao_carga_pct,
+        # V25.2: eixo de INTENSIDADE (zona de FC) — separado do eixo de
+        # MODALIDADE acima. Ausente quando nenhum treino tem dado de zona.
+        "distribuicao_zonas_fc": distribuicao_zonas_fc(treinos),
         "maior_treino_carga": treino_resumo(maior_carga),
         "maior_treino_duracao": treino_resumo(maior_duracao),
         "maior_treino_distancia": treino_resumo(maior_distancia),
@@ -2487,6 +2634,12 @@ def formatar_metricas(d):
     linhas.append("Distribuição da carga:")
     linhas.append(formatar_distribuicao(ind.get("distribuicao_carga_pct")))
     linhas.append("")
+
+    # V25.2: eixo de INTENSIDADE (zona de FC), distinto do de modalidade
+    _linha_zonas = linha_zonas_fc(ind.get("distribuicao_zonas_fc"), prefixo="")
+    if _linha_zonas:
+        linhas.append(_linha_zonas)
+        linhas.append("")
     linhas.append("Alerta de recuperação:")
     linhas.append(formatar_alerta(ind.get("alerta_recuperacao")))
     linhas.append("")
@@ -3102,6 +3255,8 @@ def filtrar_dados_para_analise(d, dominios):
             "total_sessoes": totais.get("total_sessoes"),
             "monotonia": ind.get("monotonia_carga"),
             "strain": ind.get("strain"),
+            # V25.2: intensidade por zona de FC (eixo distinto do de modalidade)
+            "distribuicao_zonas_fc": ind.get("distribuicao_zonas_fc"),
         },
     }
 
@@ -3572,6 +3727,21 @@ def calcular_prontidao(d):
         print("Erro rotação tri:", e)
         rotacao_tri = None
 
+    # V25.2: distribuição de intensidade por zona de FC dos 7 dias
+    # FECHADOS (mesma janela da rotação tri — hoje parcial fica fora).
+    # É DISPLAY: não entra em pontos/nivel/rotulo/acao, e fica no topo do
+    # retorno (não em "contexto") justamente para NÃO ir ao payload do
+    # /prontidao ia, que envia contexto inteiro.
+    try:
+        _janela_fechada = ind.get("cargas_diarias_janela") or {}
+        _treinos_janela = [
+            t for t in treinos if t.get("data") in _janela_fechada
+        ] if _janela_fechada else []
+        zonas_fc = distribuicao_zonas_fc(_treinos_janela)
+    except Exception as e:
+        print("Erro distribuição de zonas FC:", e)
+        zonas_fc = None
+
     return {
         "nivel": nivel,
         "emoji": emoji,
@@ -3583,6 +3753,7 @@ def calcular_prontidao(d):
         "avisos": avisos,
         "dados_ate": dados_ate,
         "rotacao_tri": rotacao_tri,
+        "zonas_fc": zonas_fc,  # V25.2: display do painel, fora do payload da IA
         "contexto": limpar_vazios({
             "ctl": cond.get("fitness_ctl"),
             "atl": cond.get("fadiga_atl"),
@@ -3882,6 +4053,12 @@ def formatar_prontidao(p):
                         "modalidades; parte do alerta agregado é atenuada."
                         + nota_misto
                     )
+
+        # V25.2: distribuição de INTENSIDADE (zona de FC) — eixo separado
+        # da "Distribuição" por modalidade acima; some sem dado de zona.
+        _linha_zonas = linha_zonas_fc(p.get("zonas_fc"))
+        if _linha_zonas:
+            linhas.append(_linha_zonas)
 
         # V24.6: wellness numérico (valor de hoje vs média/faixa/baseline)
         well = ctx.get("wellness") or {}
