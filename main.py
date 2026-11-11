@@ -5104,6 +5104,9 @@ async def custos_command(update, context):
         "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
         "gpt-5.6-terra": {"input": 2.50, "output": 15.00},
         "gpt-5.6-luna": {"input": 1.00, "output": 6.00},
+        "gpt-6-luna": {"input": 0.10, "output": 0.50},
+        "gpt-6.1-terra": {"input": 1.00, "output": 5.00},
+        "gpt-6.1-sol": {"input": 2.00, "output": 10.00},
     }
 
     custo_total = 0.0
